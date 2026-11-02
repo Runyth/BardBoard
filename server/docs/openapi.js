@@ -428,6 +428,21 @@ const openApiSpec = {
         }
       }
     },
+    '/leave-channel': {
+      post: {
+        tags: ['audio'],
+        summary: 'Leave the active voice channel',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ChannelRequest' } } }
+        },
+        responses: {
+          200: { description: 'Left the voice channel' },
+          400: { description: 'Invalid channelId' },
+          404: { description: 'Channel not found' }
+        }
+      }
+    },
     '/toggle-repeat': {
       post: {
         tags: ['audio'],

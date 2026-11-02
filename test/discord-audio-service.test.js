@@ -209,6 +209,17 @@ describe('Discord audio service', () => {
     assert.equal(connections.length, 2);
   });
 
+  test('leaving channel stops audio and destroys connection', async () => {
+    const { service, players, connections } = createHarness();
+    await service.playAudioInDiscord('song.mp3', CHANNEL_ONE);
+
+    assert.equal(service.leaveVoiceChannel(CHANNEL_ONE), true);
+    assert.equal(players[0].stopCalls >= 1, true);
+    assert.equal(connections[0].destroyed, true);
+    assert.equal(service.isPlaying(CHANNEL_ONE), false);
+    assert.equal(service.leaveVoiceChannel(UNKNOWN_CHANNEL), false);
+  });
+
   test('repeat recreates the current resource when playback becomes idle', async () => {
     const { service, players, resources } = createHarness();
     await service.playAudioInDiscord('loop.ogg', CHANNEL_ONE);

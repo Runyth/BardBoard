@@ -13,6 +13,7 @@ function createAudioService(overrides = {}) {
     getPauseStatus: createSpy(() => ({ paused: false })),
     stopAudioInDiscord: createSpy(() => true),
     switchVoiceChannel: createSpy(() => true),
+    leaveVoiceChannel: createSpy(() => true),
     toggleRepeat: createSpy(() => true),
     setCurrentVolume: createSpy(() => true),
     getVolume: createSpy(() => ({ volume: 0.5 })),
@@ -132,6 +133,7 @@ describe('audio API', () => {
       ['/pause-status?channelId=invalid', { method: 'GET' }],
       ['/stop-audio', { method: 'POST', body: { channelId: 'invalid' } }],
       ['/switch-channel', { method: 'POST', body: { channelId: 'invalid' } }],
+      ['/leave-channel', { method: 'POST', body: { channelId: 'invalid' } }],
       ['/toggle-repeat', { method: 'POST', body: { channelId: 'invalid' } }],
       ['/set-volume', { method: 'POST', body: { channelId: 'invalid', volume: 0.5 } }],
       ['/get-volume?channelId=invalid', { method: 'GET' }],
@@ -215,17 +217,23 @@ describe('audio API', () => {
         method: 'POST',
         body: { channelId: CHANNEL_ID }
       })).status, 200);
+      assert.equal((await request(baseUrl, '/leave-channel', {
+        method: 'POST',
+        body: { channelId: CHANNEL_ID }
+      })).status, 200);
 
       assert.deepEqual(service.togglePause.calls, [[CHANNEL_ID]]);
       assert.deepEqual(service.stopAudioInDiscord.calls, [[CHANNEL_ID]]);
       assert.deepEqual(service.switchVoiceChannel.calls, [[CHANNEL_ID]]);
+      assert.deepEqual(service.leaveVoiceChannel.calls, [[CHANNEL_ID]]);
     });
   });
 
   test('pause and channel switch return 404 when no Discord resource exists', async () => {
     const service = createAudioService({
       togglePause: createSpy(() => null),
-      switchVoiceChannel: createSpy(() => false)
+      switchVoiceChannel: createSpy(() => false),
+      leaveVoiceChannel: createSpy(() => false)
     });
 
     await callAudioApi(service, async baseUrl => {
@@ -234,6 +242,10 @@ describe('audio API', () => {
         body: { channelId: CHANNEL_ID }
       })).status, 404);
       assert.equal((await request(baseUrl, '/switch-channel', {
+        method: 'POST',
+        body: { channelId: CHANNEL_ID }
+      })).status, 404);
+      assert.equal((await request(baseUrl, '/leave-channel', {
         method: 'POST',
         body: { channelId: CHANNEL_ID }
       })).status, 404);

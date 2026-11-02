@@ -550,6 +550,26 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
     return true;
   }
 
+  function leaveVoiceChannel(channelId) {
+    const channel = getChannel(channelId);
+    if (!channel) return false;
+
+    const guildId = channel.guild.id;
+    cleanupPlayerOnly(guildId);
+
+    const connection = activeConnections.get(guildId);
+    if (connection) {
+      try {
+        connection.destroy();
+        connection.removeAllListeners();
+      } catch (error) {
+        console.error('Error leaving voice channel:', error);
+      }
+    }
+    activeConnections.delete(guildId);
+    return true;
+  }
+
   function toggleRepeat(channelId) {
     const channel = getChannel(channelId);
     if (!channel) return null;
@@ -692,6 +712,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
     getPauseStatus,
     stopAudioInDiscord,
     switchVoiceChannel,
+    leaveVoiceChannel,
     toggleRepeat,
     getRepeatStatus,
     setCurrentVolume,
