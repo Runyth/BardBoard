@@ -134,9 +134,10 @@ function defaultFromProcess(key, fallback) {
 }
 
 function getEffectiveDefaults() {
+  const sessionSecret = String(process.env.SESSION_SECRET || '').trim() || generateSessionSecret();
   return {
     DISCORD_TOKEN: defaultFromProcess('DISCORD_TOKEN', ''),
-    SESSION_SECRET: defaultFromProcess('SESSION_SECRET', generateSessionSecret()),
+    SESSION_SECRET: sessionSecret,
     ...Object.fromEntries(Object.entries(DEFAULT_CONFIG_VALUES).map(([key, value]) => [key, defaultFromProcess(key, value)]))
   };
 }
@@ -176,6 +177,11 @@ function ensureEnvFile() {
       values[key] = defaults[key] || '';
       changed = true;
     }
+  }
+
+  if (!String(values.SESSION_SECRET || '').trim()) {
+    values.SESSION_SECRET = defaults.SESSION_SECRET;
+    changed = true;
   }
 
   for (const [key, value] of Object.entries(defaults)) {

@@ -16,6 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const { Events, Client, GatewayIntentBits } = require('discord.js');
 const helmet = require('helmet');
@@ -195,8 +196,14 @@ if (corsOrigins.length > 0) {
   });
 }
 cleanupNonRememberSessions();
+const sessionSecret = String(process.env.SESSION_SECRET || '').trim();
+if (!sessionSecret) {
+  const generated = crypto.randomBytes(32).toString('hex');
+  process.env.SESSION_SECRET = generated;
+  console.warn('SESSION_SECRET was empty; generated a random secret for this process.');
+}
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'change-me',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   store: sessionStore,
