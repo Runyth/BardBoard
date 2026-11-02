@@ -60,6 +60,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
     const player = activeAudioPlayers.get(guildId);
     if (player) {
       try {
+        player.removeAllListeners('stateChange');
         player.stop();
         player.removeAllListeners();
       } catch (error) {

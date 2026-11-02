@@ -40,8 +40,11 @@ class FakePlayer extends EventEmitter {
 
   stop() {
     this.stopCalls += 1;
+    const wasIdle = this.state.status === AudioPlayerStatus.Idle;
+    const oldState = this.state;
     this.state = { status: AudioPlayerStatus.Idle, resource: null };
-    return true;
+    if (!wasIdle) this.emit('stateChange', oldState, this.state);
+    return !wasIdle;
   }
 
   finish() {
@@ -229,6 +232,32 @@ describe('Discord audio service', () => {
     assert.equal(resources.at(-1).source, 'virtual/audio/next.wav');
     assert.deepEqual(service.getQueue(CHANNEL_ONE), []);
     assert.equal((await service.nowPlaying(CHANNEL_ONE)).song, 'next');
+  });
+
+  test('stopping playback does not advance the queue', async () => {
+    const { service, resources } = createHarness();
+    service.addToQueue(CHANNEL_ONE, 'next.wav');
+    await service.playAudioInDiscord('first.mp3', CHANNEL_ONE);
+
+    assert.equal(service.stopAudioInDiscord(CHANNEL_ONE), true);
+    await nextTurn();
+    await nextTurn();
+
+    assert.equal(resources.length, 1);
+    assert.deepEqual(service.getQueue(CHANNEL_ONE), ['next.wav']);
+    assert.equal(service.isPlaying(CHANNEL_ONE), false);
+  });
+
+  test('replacing the current track does not advance the queue', async () => {
+    const { service, resources } = createHarness();
+    service.addToQueue(CHANNEL_ONE, 'queued.wav');
+    await service.playAudioInDiscord('first.mp3', CHANNEL_ONE);
+    await service.playAudioInDiscord('second.mp3', CHANNEL_ONE);
+    await nextTurn();
+    await nextTurn();
+
+    assert.equal(resources.length, 2);
+    assert.deepEqual(service.getQueue(CHANNEL_ONE), ['queued.wav']);
   });
 
   test('seek uses ffmpeg and preserves a paused state', async () => {
