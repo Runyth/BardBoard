@@ -2141,6 +2141,60 @@ body.login-page {
     font-size: 0.9rem;
 }
 
+.user-create {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) 140px auto;
+    gap: 10px;
+    align-items: end;
+}
+
+.user-list {
+    display: grid;
+    gap: 10px;
+}
+
+.user-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 150px auto;
+    gap: 10px;
+    align-items: end;
+    padding: 10px;
+    border: 1px solid var(--border-glass);
+    border-radius: 10px;
+    background: rgba(0,0,0,0.12);
+}
+
+.user-row-disabled {
+    opacity: 0.62;
+}
+
+.user-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+
+.user-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    grid-column: 1 / -1;
+}
+
+.user-actions .ctrl-btn {
+    min-height: 34px;
+}
+
+@media (max-width: 760px) {
+    .user-create,
+    .user-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 .settings-error {
     display: block;
 }

@@ -26,6 +26,12 @@ async function mockSoundboard(page, options = {}) {
     failNextAudioFiles: false,
     refreshFailureAfterUpload: Boolean(options.refreshFailureAfterUpload),
     canManageSettings: options.canManageSettings ?? true,
+    canManageUsers: options.canManageUsers ?? options.canManageSettings ?? true,
+    users: [...(options.users || [{ id: 'user-admin', username: 'admin', role: 'admin', disabled: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', lastLoginAt: null }])],
+    roles: options.roles || {
+      admin: { label: 'Admin', permissions: ['audio:control', 'playlist:manage', 'files:manage', 'settings:manage', 'users:manage', 'system:restart'] },
+      user: { label: 'User', permissions: ['audio:control', 'playlist:manage', 'files:manage'] }
+    },
     settings: Object.fromEntries((options.settingsItems || [
       {
         key: 'DISCORD_TOKEN',
@@ -138,7 +144,8 @@ async function mockSoundboard(page, options = {}) {
           authEnabled: true,
           authenticated: state.authenticated,
           role: 'admin',
-          canManageSettings: state.canManageSettings
+          canManageSettings: state.canManageSettings,
+          canManageUsers: state.canManageUsers
         }
       });
     }
@@ -216,6 +223,41 @@ async function mockSoundboard(page, options = {}) {
         state.failNextAudioFiles = true;
       }
       return route.fulfill({ json: { ok: failed.length === 0, uploaded, failed } });
+    }
+    if (apiPath === '/api/users' && method === 'GET') {
+      return route.fulfill({ json: { users: state.users, roles: state.roles } });
+    }
+    if (apiPath === '/api/users' && method === 'POST') {
+      const user = {
+        id: `user-${state.users.length + 1}`,
+        username: body.username,
+        role: body.role || 'user',
+        disabled: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastLoginAt: null
+      };
+      state.users.push(user);
+      return route.fulfill({ status: 201, json: { ok: true, user } });
+    }
+    const userMatch = apiPath.match(/^\/api\/users\/([^/]+)(\/password)?$/);
+    if (userMatch) {
+      const user = state.users.find(item => item.id === userMatch[1]);
+      if (!user) return route.fulfill({ status: 404, json: { error: 'User not found.' } });
+      if (userMatch[2] && method === 'POST') {
+        return route.fulfill({ json: { ok: true, user } });
+      }
+      if (method === 'PATCH') {
+        if (body.username !== undefined) user.username = body.username;
+        if (body.role !== undefined) user.role = body.role;
+        if (body.disabled !== undefined) user.disabled = Boolean(body.disabled);
+        user.updatedAt = new Date().toISOString();
+        return route.fulfill({ json: { ok: true, user } });
+      }
+      if (method === 'DELETE') {
+        state.users = state.users.filter(item => item.id !== user.id);
+        return route.fulfill({ json: { ok: true } });
+      }
     }
     if (apiPath === '/api/audio-file/rename') {
       const source = body.path;
@@ -557,14 +599,14 @@ test('first-boot setup validates credentials, reports errors and requests a rest
   const state = await mockSoundboard(page, { setupMode: true, setupFailures: 1 });
   await page.goto('/setup');
 
-  const tokenInput = page.locator('label').filter({ hasText: 'DISCORD_TOKEN' }).locator('input');
-  const adminPasswordInput = page.locator('label').filter({ hasText: 'AUTH_ADMIN_PASS' }).locator('input');
+  const tokenInput = page.locator('label').filter({ hasText: 'Discord bot token' }).locator('input');
+  const adminPasswordInput = page.locator('label').filter({ hasText: 'Admin password' }).locator('input');
   await tokenInput.fill('e2e-discord-token');
   await adminPasswordInput.fill('admin-secret');
-  await page.getByLabel('Enable readonly account (optional)').check();
+  await page.getByLabel('Create a standard user (optional)').check();
 
-  const readonlyUserInput = page.locator('label').filter({ hasText: 'AUTH_READONLY_USER' }).locator('input');
-  const readonlyPasswordInput = page.locator('label').filter({ hasText: 'AUTH_READONLY_PASS' }).locator('input');
+  const readonlyUserInput = page.locator('label').filter({ hasText: 'Standard user username' }).locator('input');
+  const readonlyPasswordInput = page.locator('label').filter({ hasText: 'Standard user password' }).locator('input');
   await page.getByRole('button', { name: 'Save and Restart' }).click();
   await expect(readonlyUserInput).toBeFocused();
   expect(state.requests.filter(item => item.path === '/api/setup/complete')).toHaveLength(0);
@@ -617,6 +659,25 @@ test('settings validate changes, avoid unnecessary restarts and save valid value
   await expect(page).toHaveURL(/\/restarting$/);
 });
 
+test('admins can list and create users', async ({ page }) => {
+  const state = await mockSoundboard(page);
+  await page.goto('/users');
+
+  await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
+  await expect(page.locator('.user-row')).toHaveCount(1);
+
+  const createForm = page.locator('.user-create');
+  await createForm.getByLabel('Username').fill('new-user');
+  await createForm.getByLabel('Password').fill('new-user-secret');
+  await createForm.getByLabel('Role').selectOption('user');
+  await createForm.getByRole('button', { name: 'Create user' }).click();
+
+  await expect.poll(() => state.requests.some(item => (
+    item.path === '/api/users' && item.method === 'POST' && item.body?.username === 'new-user'
+  ))).toBe(true);
+  await expect(page.locator('.user-row')).toHaveCount(2);
+});
+
 test('readonly users cannot open settings', async ({ page }) => {
   const state = await mockSoundboard(page, { canManageSettings: false });
   await page.goto('/settings');
@@ -624,6 +685,14 @@ test('readonly users cannot open settings', async ({ page }) => {
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: /BardBoard/ })).toBeVisible();
   expect(state.requests.some(item => item.path === '/api/settings/config')).toBe(false);
+});
+
+test('readonly users cannot open user management', async ({ page }) => {
+  await mockSoundboard(page, { canManageSettings: false });
+  await page.goto('/users');
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { name: /BardBoard/ })).toBeVisible();
 });
 
 test('the browser reaches the real Express API through the Next.js proxy', async ({ page }) => {

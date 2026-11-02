@@ -99,35 +99,35 @@ export default function SetupPage() {
           ) : (
             <form className="settings-form" onSubmit={onSubmit}>
               <label className="settings-field">
-                <span className="field-label settings-field-label"><code>DISCORD_TOKEN</code></span>
+                <span className="field-label settings-field-label">Discord bot token</span>
                 <input className="field-input login-input" type="password" value={discordToken} onChange={e => setDiscordToken(e.target.value)} required />
               </label>
 
               <label className="settings-field">
-                <span className="field-label settings-field-label"><code>AUTH_ADMIN_USER</code></span>
+                <span className="field-label settings-field-label">Admin username</span>
                 <input className="field-input login-input" type="text" value={adminUser} onChange={e => setAdminUser(e.target.value)} required />
               </label>
 
               <label className="settings-field">
-                <span className="field-label settings-field-label"><code>AUTH_ADMIN_PASS</code></span>
-                <input className="field-input login-input" type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} required />
+                <span className="field-label settings-field-label">Admin password</span>
+                <input className="field-input login-input" type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} minLength={8} required />
               </label>
 
               <label className="settings-field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <input type="checkbox" checked={readonlyEnabled} onChange={e => setReadonlyEnabled(e.target.checked)} />
-                <span>Enable readonly account (optional)</span>
+                <span>Create a standard user (optional)</span>
               </label>
 
               {readonlyEnabled && (
                 <>
                   <label className="settings-field">
-                    <span className="field-label settings-field-label"><code>AUTH_READONLY_USER</code></span>
+                    <span className="field-label settings-field-label">Standard user username</span>
                     <input className="field-input login-input" type="text" value={readonlyUser} onChange={e => setReadonlyUser(e.target.value)} required={readonlyEnabled} />
                   </label>
 
                   <label className="settings-field">
-                    <span className="field-label settings-field-label"><code>AUTH_READONLY_PASS</code></span>
-                    <input className="field-input login-input" type="password" value={readonlyPass} onChange={e => setReadonlyPass(e.target.value)} required={readonlyEnabled} />
+                    <span className="field-label settings-field-label">Standard user password</span>
+                    <input className="field-input login-input" type="password" value={readonlyPass} onChange={e => setReadonlyPass(e.target.value)} minLength={8} required={readonlyEnabled} />
                   </label>
                 </>
               )}

@@ -184,6 +184,7 @@ export default function SettingsPage() {
               {status && <p className="settings-status">{status}</p>}
 
               <div className="settings-actions">
+                <Link className="ctrl-btn login-submit" href="/users">Manage users</Link>
                 <Link className="ctrl-btn login-submit" href="/">Cancel</Link>
                 <button type="submit" className="ctrl-btn login-submit" disabled={saving}>
                   {saving ? 'Saving...' : 'Save and Restart'}
