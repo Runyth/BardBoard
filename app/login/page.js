@@ -47,7 +47,7 @@ export default function LoginPage() {
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && data?.setupRequired) {
-          window.location.href = '/setup';
+          window.location.replace('/setup');
         }
       } catch {
         // Ignore startup races.
@@ -72,7 +72,7 @@ export default function LoginPage() {
         return;
       }
       if (res.ok) {
-        window.location.href = '/';
+        window.location.replace('/');
         return;
       }
       setFailed(true);

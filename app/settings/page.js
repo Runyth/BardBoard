@@ -45,22 +45,22 @@ export default function SettingsPage() {
       try {
         const authRes = await fetch('/api/auth/status');
         if (authRes.status === 401) {
-          window.location.href = '/login';
+          window.location.replace('/login');
           return;
         }
         const auth = await authRes.json();
         if (!auth.authEnabled) {
-          window.location.href = '/';
+          window.location.replace('/');
           return;
         }
         if (!auth.canManageSettings) {
-          window.location.href = '/';
+          window.location.replace('/');
           return;
         }
 
         const res = await fetch('/api/settings/config');
         if (res.status === 401) {
-          window.location.href = '/login';
+          window.location.replace('/login');
           return;
         }
         const data = await res.json();
@@ -118,7 +118,7 @@ export default function SettingsPage() {
       }).catch(() => {
         // If request fails, restart page still gives manual retry path.
       });
-      window.location.href = `/restarting${query}`;
+      window.location.replace(`/restarting${query}`);
     } catch (err) {
       setError(err?.message || 'Failed to save settings.');
       setSaving(false);

@@ -23,7 +23,7 @@ export default function SetupPage() {
           if (!res.ok) throw new Error('Unable to verify setup status.');
           const data = await res.json();
           if (!cancelled && !data?.setupRequired) {
-            window.location.href = '/';
+            window.location.replace('/');
             return;
           }
           if (!cancelled) {
@@ -72,7 +72,7 @@ export default function SetupPage() {
         keepalive: true
       }).catch(() => {});
 
-      window.location.href = '/restarting';
+      window.location.replace('/restarting');
     } catch (err) {
       setError(err?.message || 'Setup failed.');
       setSaving(false);
