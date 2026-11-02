@@ -56,6 +56,12 @@ Compose.
   is configured, otherwise to `.env`. These files are git-ignored; never commit
   tokens, passwords, session secrets, or generated configuration.
 - `SESSION_SECRET` is generated when missing. Do not restore a hardcoded default.
+- User accounts live in `users.json` next to the active config file (or
+  `BARDBOARD_USERS_PATH`). Passwords are scrypt-hashed; never add plaintext
+  passwords or commit the user store. Legacy `AUTH_*` credentials only seed the
+  store when it does not exist.
+- Roles are `admin` (all permissions) and `user` (soundboard, files, playlists).
+  Protect the last active admin in user-management changes.
 - `SESSION_DIR` defaults to `sessions/`; audio files live in `audio-files/`.
 - In Docker, `WEB_PORT`, `BOT_PORT`, `BACKEND_URL`, `UPLOAD_MAX_MB`, and
   `SESSION_DIR` come from the deployment environment and override persisted

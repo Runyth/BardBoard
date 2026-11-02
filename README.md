@@ -392,6 +392,24 @@ Open the web UI, select a Discord voice channel, then click a track.
 
 The settings page is available to admins. It shows editable runtime configuration values. Changes that affect bot login, auth, rate limits, or sessions require a restart.
 
+### User Management
+
+Admins can manage accounts from the **Users** page. Users can be created, renamed,
+enabled or disabled, assigned the `admin` or `user` role, have their password
+reset, or be deleted.
+
+- `admin` has every permission, including settings, user management, and restarts.
+- `user` can use the soundboard and manage files and playlists, but cannot manage
+  settings or other users.
+
+Passwords must be at least 8 characters, are hashed with scrypt, and are never
+stored in plaintext. User records
+live in `users.json` next to the active configuration file (or at
+`BARDBOARD_USERS_PATH`). The file is created with mode `0600` and is git-ignored.
+Changing a user's role, disabling them, resetting their password, or deleting
+them invalidates their existing sessions. The last active admin cannot be
+demoted, disabled, or deleted.
+
 ## Configuration
 
 BardBoard reads configuration from:
@@ -421,16 +439,15 @@ stop the bot/API at startup with a clear error.
 
 ```yaml
 DISCORD_TOKEN: your-token
-AUTH_ADMIN_USER: admin
-AUTH_ADMIN_PASS: change-me
 SESSION_SECRET: generated-or-provided-secret
 NOISES_VOLUME: 2
 CORS_ORIGINS:
   - https://bardboard.example
 ```
 
-The settings and setup pages write to the active configuration file when one is
-configured. Writing may normalize formatting and remove comments in that file.
+The settings page writes to the active configuration file when one is configured.
+First-boot setup writes the Discord token there and creates the first admin in the
+user store. Writing may normalize formatting and remove comments in the config file.
 Configuration files contain secrets, so restrict their permissions; BardBoard
 creates them with mode `0600`.
 
@@ -444,18 +461,20 @@ so it is not shown or edited by the BardBoard settings page.
 The setup page requires:
 
 - `DISCORD_TOKEN`
-- `AUTH_ADMIN_USER`
-- `AUTH_ADMIN_PASS`
+- An admin username and password (created in the user store)
 
-`AUTH_READONLY_USER` and `AUTH_READONLY_PASS` are optional.
+It can also create an optional standard user. Existing `AUTH_ADMIN_USER`,
+`AUTH_ADMIN_PASS`, `AUTH_READONLY_USER`, and `AUTH_READONLY_PASS` values are used
+once to seed the user store when `users.json` does not exist; after migration,
+manage accounts from the Users page.
 
 | Variable | Required | Default | Description | Apply method |
 |---|---:|---|---|---|
 | `DISCORD_TOKEN` | Yes | empty | Discord bot token. | Restart |
-| `AUTH_ADMIN_USER` | Yes for setup | empty | Admin username. | Restart |
-| `AUTH_ADMIN_PASS` | Yes for setup | empty | Admin password. | Restart |
-| `AUTH_READONLY_USER` | No | empty | Optional readonly username. | Restart |
-| `AUTH_READONLY_PASS` | No | empty | Optional readonly password. | Restart |
+| `AUTH_ADMIN_USER` | No | empty | Legacy admin username used to seed `users.json`. | Restart |
+| `AUTH_ADMIN_PASS` | No | empty | Legacy admin password used to seed `users.json`. | Restart |
+| `AUTH_READONLY_USER` | No | empty | Legacy standard username used to seed `users.json`. | Restart |
+| `AUTH_READONLY_PASS` | No | empty | Legacy standard password used to seed `users.json`. | Restart |
 | `SESSION_SECRET` | Recommended | generated | Session signing secret. | Restart |
 | `LOGIN_REMEMBER_DAYS` | No | `30` | Remember-me cookie duration. | Restart |
 | `SESSION_DIR` | No | `./sessions` | Application session path. Keep `./sessions` in Docker. | Restart |
@@ -478,6 +497,7 @@ The setup page requires:
 | `UPLOAD_MAX_MB` | No | `50` | Max upload size per file in MB. | Rebuild containers |
 | `BARDBOARD_ENV_PATH` | No | varies | Path to the legacy `.env` file. Docker sets this automatically. | Restart |
 | `BARDBOARD_CONFIG_PATH` | No | auto-detected | Path to a YAML/JSON/TOML configuration file. | Restart |
+| `BARDBOARD_USERS_PATH` | No | next to config | Path to the hashed user store (`users.json`). | Restart |
 
 ## Troubleshooting
 
