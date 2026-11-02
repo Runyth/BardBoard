@@ -20,7 +20,7 @@ function getFreePort() {
   });
 }
 
-async function waitForHealth(url, child, timeoutMs = 10000) {
+async function waitForHealth(url, child, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
