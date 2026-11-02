@@ -252,9 +252,14 @@ app.post('/setup/complete', (req, res) => {
   process.env.AUTH_ADMIN_PASS = adminPassInput;
   process.env.AUTH_READONLY_USER = readonlyEnabled ? readonlyUserInput : '';
   process.env.AUTH_READONLY_PASS = readonlyEnabled ? readonlyPassInput : '';
-  ensureDiscordLogin();
 
-  return res.status(200).json({ ok: true, changedKeys, restartRequired: true });
+  req.session.authenticated = true;
+  req.session.role = 'admin';
+  req.session.remember = false;
+  req.session.save(() => {
+    ensureDiscordLogin();
+    res.status(200).json({ ok: true, changedKeys, restartRequired: true });
+  });
 });
 
 app.post('/auth/login', (req, res) => {
