@@ -29,13 +29,14 @@ const createAudioRoutes = require('./routes/audio');
 const createPlaylistRoutes = require('./routes/playlist');
 const createFileRoutes = require('./routes/files');
 const openApiSpec = require('./docs/openapi');
-const { ensureEnvFile, getEnvFilePath, readCurrentConfig, validateInput, writeConfig, isConfiguredForFirstBoot } = require('./utils/envConfig');
+const { ensureEnvFile, getEnvFilePath, loadConfigFileIntoEnv, readCurrentConfig, validateInput, writeConfig, isConfiguredForFirstBoot } = require('./utils/envConfig');
 const deploymentEnvKeys = ['WEB_PORT', 'BOT_PORT', 'BACKEND_URL', 'UPLOAD_MAX_MB', 'SESSION_DIR'];
 const deploymentEnv = Object.fromEntries(deploymentEnvKeys
   .filter(key => Object.prototype.hasOwnProperty.call(process.env, key))
   .map(key => [key, process.env[key]]));
 ensureEnvFile();
 require('dotenv').config({ path: getEnvFilePath(), override: true });
+loadConfigFileIntoEnv();
 Object.assign(process.env, deploymentEnv);
 
 const app = express();

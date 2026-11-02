@@ -18,6 +18,14 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { writeFileAtomically } = require('./atomicFile');
+const {
+  detectConfigFormat,
+  getConfigFilePath,
+  normalizeConfigValues,
+  readConfigFile,
+  writeConfigFile
+} = require('./configFile');
 
 const CONFIG_FIELDS = [
   { key: 'DISCORD_TOKEN', label: 'Discord Token', section: 'Required Discord Settings', description: 'Bot token from the Discord Developer Portal.', secret: true, restartScope: 'bot' },
@@ -46,6 +54,7 @@ const CONFIG_FIELDS = [
   { key: 'SESSION_WRITE_RETRIES', label: 'Session Write Retries', section: 'Session File Retry Tuning', description: 'Extra retries for EPERM/EBUSY during session writes.', type: 'integer', restartScope: 'bot' }
 ];
 
+const CONFIG_FIELD_MAP = new Map(CONFIG_FIELDS.map(field => [field.key, field]));
 const EDITABLE_CONFIG_KEYS = new Set(CONFIG_FIELDS
   .filter(field => field.settingsEditable !== false)
   .map(field => field.key));
@@ -74,6 +83,9 @@ const DEFAULT_CONFIG_VALUES = {
   SESSION_FILE_RETRY_MAX_MS: '200',
   SESSION_WRITE_RETRIES: '6'
 };
+
+let activeConfigPath = '';
+let activeConfigValues = {};
 
 function getEnvFilePath() {
   const explicitEnvPath = String(process.env.BARDBOARD_ENV_PATH || '').trim();
@@ -142,27 +154,6 @@ function getEffectiveDefaults() {
   };
 }
 
-function writeFileAtomically(filePath, contents, fsImpl = fs) {
-  const tempPath = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  );
-
-  try {
-    fsImpl.writeFileSync(tempPath, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    fsImpl.renameSync(tempPath, filePath);
-  } catch (error) {
-    try {
-      fsImpl.rmSync(tempPath, { force: true });
-    } catch (cleanupError) {
-      if (cleanupError.code !== 'ENOENT') {
-        console.warn('Could not remove temporary config file:', cleanupError.message);
-      }
-    }
-    throw error;
-  }
-}
-
 function ensureEnvFile() {
   const envPath = getEnvFilePath();
   const defaults = getEffectiveDefaults();
@@ -229,15 +220,86 @@ function readCurrentConfig() {
   const parsed = parseEnvLines(raw);
 
   return CONFIG_FIELDS.map(field => {
+    const hasConfigValue = Object.prototype.hasOwnProperty.call(activeConfigValues, field.key);
     const hasFileValue = Object.prototype.hasOwnProperty.call(parsed.values, field.key);
     const processValue = Object.prototype.hasOwnProperty.call(process.env, field.key) ? String(process.env[field.key] ?? '') : '';
-    const value = hasFileValue ? parsed.values[field.key] : processValue;
+    const value = hasConfigValue
+      ? activeConfigValues[field.key]
+      : (hasFileValue ? parsed.values[field.key] : processValue);
     return {
       ...field,
       value,
       configured: value !== ''
     };
   });
+}
+
+function validateFieldValue(field, value, key = field?.key || 'value') {
+  if (value.length > 2048) {
+    return { error: `Value too long for ${key}` };
+  }
+
+  if (field?.type === 'integer' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || `${parsed}` !== value.trim() || parsed < 0) {
+      return { error: `Invalid integer for ${key}` };
+    }
+  }
+
+  if (field?.type === 'number' && value.trim() !== '') {
+    const trimmed = value.trim();
+    const parsed = Number(trimmed);
+    const min = Number.isFinite(field.min) ? field.min : Number.NEGATIVE_INFINITY;
+    const max = Number.isFinite(field.max) ? field.max : Number.POSITIVE_INFINITY;
+    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed) || !Number.isFinite(parsed) || parsed < min || parsed > max) {
+      return { error: `Invalid number for ${key}` };
+    }
+  }
+
+  return { value };
+}
+
+function validateConfigValues(inputValues) {
+  const out = {};
+  for (const [rawKey, rawValue] of Object.entries(inputValues || {})) {
+    const key = String(rawKey || '').trim();
+    const field = CONFIG_FIELD_MAP.get(key);
+    if (!field) {
+      return { error: `Unknown configuration key: ${key}` };
+    }
+    const value = String(rawValue ?? '');
+    const validation = validateFieldValue(field, value, key);
+    if (validation.error) return validation;
+    out[key] = value;
+  }
+  return { values: out };
+}
+
+function resetConfigFileState() {
+  activeConfigPath = '';
+  activeConfigValues = {};
+}
+
+function loadConfigFileIntoEnv() {
+  activeConfigPath = getConfigFilePath();
+  activeConfigValues = {};
+  if (!activeConfigPath) return null;
+
+  detectConfigFormat(activeConfigPath);
+  let values;
+  try {
+    values = readConfigFile(activeConfigPath);
+  } catch (error) {
+    throw new Error(`Could not read configuration file ${activeConfigPath}: ${error.message}`);
+  }
+  const validated = validateConfigValues(values);
+  if (validated.error) {
+    throw new Error(`Invalid configuration file ${activeConfigPath}: ${validated.error}`);
+  }
+
+  activeConfigValues = validated.values;
+  Object.assign(process.env, activeConfigValues);
+  return activeConfigPath;
 }
 
 function validateInput(inputValues, currentItems) {
@@ -248,27 +310,8 @@ function validateInput(inputValues, currentItems) {
     if (!EDITABLE_CONFIG_KEYS.has(key)) continue;
     const field = currentMap.get(key);
     const value = String(rawValue ?? '');
-
-    if (value.length > 2048) {
-      return { error: `Value too long for ${key}` };
-    }
-
-    if (field?.type === 'integer' && value.trim() !== '') {
-      const parsed = Number.parseInt(value, 10);
-      if (!Number.isFinite(parsed) || `${parsed}` !== value.trim() || parsed < 0) {
-        return { error: `Invalid integer for ${key}` };
-      }
-    }
-
-    if (field?.type === 'number' && value.trim() !== '') {
-      const trimmed = value.trim();
-      const parsed = Number(trimmed);
-      const min = Number.isFinite(field.min) ? field.min : Number.NEGATIVE_INFINITY;
-      const max = Number.isFinite(field.max) ? field.max : Number.POSITIVE_INFINITY;
-      if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed) || !Number.isFinite(parsed) || parsed < min || parsed > max) {
-        return { error: `Invalid number for ${key}` };
-      }
-    }
+    const validation = validateFieldValue(field, value, key);
+    if (validation.error) return validation;
 
     if (field?.secret && value === '' && field.configured) {
       continue;
@@ -281,6 +324,23 @@ function validateInput(inputValues, currentItems) {
 
 function writeConfig(updatedValues, options = {}) {
   const fsImpl = options.fs || fs;
+  const configPath = activeConfigPath || getConfigFilePath();
+  if (configPath) {
+    const beforeValues = readConfigFile(configPath);
+    const nextValues = normalizeConfigValues(updatedValues);
+    const changedKeys = Object.keys(nextValues).filter(key => (
+      !Object.prototype.hasOwnProperty.call(beforeValues, key)
+      || String(beforeValues[key]) !== String(nextValues[key])
+    ));
+
+    if (changedKeys.length) {
+      writeConfigFile(configPath, nextValues, { fs: fsImpl });
+      activeConfigPath = configPath;
+      activeConfigValues = { ...activeConfigValues, ...nextValues };
+    }
+    return changedKeys;
+  }
+
   const envPath = getEnvFilePath();
   const before = fsImpl.existsSync(envPath) ? fsImpl.readFileSync(envPath, 'utf8') : '';
   const parsed = parseEnvLines(before);
@@ -324,7 +384,10 @@ module.exports = {
   ensureEnvFile,
   getEnvFilePath,
   isConfiguredForFirstBoot,
+  loadConfigFileIntoEnv,
   readCurrentConfig,
+  resetConfigFileState,
+  validateConfigValues,
   validateInput,
   writeConfig
 };
