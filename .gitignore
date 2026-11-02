@@ -20,6 +20,11 @@ node_modules/
 jspm_packages/
 web_modules/
 
+# Local configuration and user store
+bardboard.config.*
+config/bardboard.config.*
+users.json
+
 # dotenv environment variable files
 .env
 .env.development.local
