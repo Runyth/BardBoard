@@ -15,10 +15,11 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+import { memo } from 'react';
 import { stripExt } from './utils';
 import TrashIcon from '../icons/TrashIcon';
 
-export default function TrackButton({ file, playing, onPlay, onQueue, onRename, onDelete, onDragStart, onDragEnd }) {
+function TrackButton({ file, playing, onPlay, onQueue, onRename, onDelete, onDragStart, onDragEnd }) {
   const display = stripExt(file.split('/').pop());
   return (
     <div
@@ -51,3 +52,4 @@ export default function TrackButton({ file, playing, onPlay, onQueue, onRename, 
   );
 }
 
+export default memo(TrackButton);

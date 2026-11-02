@@ -52,8 +52,6 @@ export default function SoundboardClient() {
   const [repeatEnabled, setRepeatEnabled] = useState(false);
   const [paused, setPaused] = useState(false);
   const [np, setNp] = useState({ song: null, elapsed: 0, duration: 0, paused: false, playing: false });
-  const [npElapsed, setNpElapsed] = useState(0);
-  const [seeking, setSeeking] = useState(false);
   const [playlist, setPlaylist] = useState([]);
   const [channels, setChannels] = useState([]);
   const [selectedChannelId, setSelectedChannelId] = useState('');
@@ -83,7 +81,6 @@ export default function SoundboardClient() {
 
   const npRef = useRef(np);
   const npPollRef = useRef(0);
-  const seekRef = useRef(null);
   const uploadCategoryPickerRef = useRef(null);
   const draggedTrackRef = useRef('');
   const lastSentVolumeRef = useRef(50);
@@ -137,13 +134,18 @@ export default function SoundboardClient() {
       paused: Boolean(data.paused),
       playing: Boolean(data.playing)
     };
-    const prevSong = npRef.current.song;
+    const prev = npRef.current;
+    const changed = prev.song !== next.song
+      || prev.duration !== next.duration
+      || prev.paused !== next.paused
+      || prev.playing !== next.playing;
     npRef.current = next;
     npPollRef.current = performance.now();
-    setNp(next);
-    setPaused(next.paused);
-    setNpElapsed(next.elapsed);
-    if (prevSong !== next.song) void refreshPlaylist();
+    if (changed) {
+      setNp(next);
+      setPaused(next.paused);
+    }
+    if (prev.song !== next.song) void refreshPlaylist();
   }, [channelId, fetchApi, refreshPlaylist]);
 
   useEffect(() => { npRef.current = np; }, [np]);
@@ -248,12 +250,7 @@ export default function SoundboardClient() {
   useEffect(() => {
     if (!channelId) return;
     const poll = window.setInterval(() => void updateNowPlaying(), 1000);
-    const tick = window.setInterval(() => {
-      const cur = npRef.current;
-      if (!cur.song || cur.paused || !cur.playing) return;
-      setNpElapsed(Math.min(cur.elapsed + ((performance.now() - npPollRef.current) / 1000), cur.duration || 0));
-    }, 250);
-    return () => { window.clearInterval(poll); window.clearInterval(tick); };
+    return () => window.clearInterval(poll);
   }, [channelId, updateNowPlaying]);
 
   const q = search.trim().toLowerCase();
@@ -280,7 +277,6 @@ export default function SoundboardClient() {
   ]), [categories]);
 
   const nowTrack = np.song ? stripExt(np.song) : '';
-  const progress = np.duration > 0 ? (npElapsed / np.duration) * 100 : 0;
 
   const post = useCallback((url, body) => api.post(url, body), [api]);
   const requireChannel = useCallback(() => {
@@ -324,18 +320,18 @@ export default function SoundboardClient() {
     xhr.send(fd);
   }), []);
 
-  const playTrack = async file => {
+  const playTrack = useCallback(async file => {
     if (!requireChannel()) return;
     await api.playTrack(file, channelId);
     await updateNowPlaying();
-  };
-  const queueTrack = async file => {
+  }, [requireChannel, api, channelId, updateNowPlaying]);
+  const queueTrack = useCallback(async file => {
     if (!requireChannel()) return;
     const res = await api.queueTrack(file, channelId);
     const data = await parseJsonResponse(res);
     if (!res.ok) throw new Error(data.error || 'Queue operation failed');
     if (Array.isArray(data.queue)) setPlaylist(data.queue);
-  };
+  }, [requireChannel, api, channelId]);
   const setVolumeLocal = v => {
     setVolume(v);
     if (v > 0) lastNonZeroVolumeRef.current = v;
@@ -387,17 +383,17 @@ export default function SoundboardClient() {
     setPlaylist(next);
     await api.setPlaylist(next, channelId);
   };
-  const onTrackDragStart = file => {
+  const onTrackDragStart = useCallback(file => {
     draggedTrackRef.current = file;
     setDraggedTrack(file);
     setPlaylistDropActive(false);
-  };
-  const onTrackDragEnd = () => {
+  }, []);
+  const onTrackDragEnd = useCallback(() => {
     draggedTrackRef.current = '';
     setDraggedTrack('');
     setCategoryDropTarget('');
     setPlaylistDropActive(false);
-  };
+  }, []);
 
   const handleChannelChange = async nextChannelId => {
     setSelectedChannelId(nextChannelId);
@@ -546,41 +542,12 @@ export default function SoundboardClient() {
     }
   };
 
-  const seekFromClientX = useCallback(async clientX => {
-    if (!channelId || !npRef.current.song || !seekRef.current) return;
-    const rect = seekRef.current.getBoundingClientRect();
-    if (!rect.width) return;
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const target = ratio * (npRef.current.duration || 0);
-    setNpElapsed(target);
-    npRef.current = { ...npRef.current, elapsed: target };
-    npPollRef.current = performance.now();
-    await post('/api/seek', { channelId, offsetSecs: target });
+  const handleSeek = useCallback(async offsetSecs => {
+    if (!channelId) return;
+    await post('/api/seek', { channelId, offsetSecs });
   }, [channelId, post]);
 
-  useEffect(() => {
-    if (!seeking) return;
-    const onMouseMove = event => { void seekFromClientX(event.clientX); };
-    const onMouseUp = () => setSeeking(false);
-    const onTouchMove = event => {
-      if (event.touches?.[0]) void seekFromClientX(event.touches[0].clientX);
-      event.preventDefault();
-    };
-    const onTouchEnd = () => setSeeking(false);
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onTouchEnd);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onTouchEnd);
-    };
-  }, [seeking, seekFromClientX]);
-
-  const confirmDeleteFile = file => setConfirm({
+  const confirmDeleteFile = useCallback(file => setConfirm({
     open: true,
     title: 'Confirm delete',
     text: `Delete "${stripExt(file.split('/').pop())}"?`,
@@ -592,7 +559,7 @@ export default function SoundboardClient() {
       }
       await refreshFiles();
     }
-  });
+  }), [fetchApi, refreshFiles]);
 
   const confirmDeleteCategory = name => setConfirm({
     open: true,
@@ -608,10 +575,10 @@ export default function SoundboardClient() {
     }
   });
 
-  const openRenameFile = file => {
+  const openRenameFile = useCallback(file => {
     const currentName = stripExt(file.split('/').pop() || '');
     setRenameModal({ open: true, type: 'file', source: file, value: currentName });
-  };
+  }, []);
 
   const openRenameCategory = name => {
     setRenameModal({ open: true, type: 'category', source: name, value: name });
@@ -776,12 +743,9 @@ export default function SoundboardClient() {
         onToggleRepeat={toggleRepeat}
         onStop={stopAudio}
         np={np}
-        npElapsed={npElapsed}
-        progress={progress}
-        seeking={seeking}
-        setSeeking={setSeeking}
-        seekRef={seekRef}
-        seekFromClientX={seekFromClientX}
+        npRef={npRef}
+        npPollRef={npPollRef}
+        onSeek={handleSeek}
       />
 
       <main className="soundboard">

@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatTime } from './utils';
+import NowPlayingProgress from './NowPlayingProgress';
 
 export default function HeaderControls({
   paused,
@@ -32,12 +32,9 @@ export default function HeaderControls({
   onToggleRepeat,
   onStop,
   np,
-  npElapsed,
-  progress,
-  seeking,
-  setSeeking,
-  seekRef,
-  seekFromClientX
+  npRef,
+  npPollRef,
+  onSeek
 }) {
   const [channelOpen, setChannelOpen] = useState(false);
   const [activeChannelId, setActiveChannelId] = useState('');
@@ -244,20 +241,7 @@ export default function HeaderControls({
         <span className="np-label">Now Playing</span>
         <span className="np-divider">&gt;</span>
         <span id="nowPlayingSong" className="np-song">{np.song || 'Nothing playing'}</span>
-        <div className={`np-progress-row${np.song ? ' visible' : ''}`} id="npProgressRow">
-          <span className="np-time" id="npElapsed">{formatTime(npElapsed)}</span>
-          <div
-            className={`np-bar-track${seeking ? ' dragging' : ''}`}
-            id="npBarTrack"
-            ref={seekRef}
-            onMouseDown={e => { if (!np.song) return; setSeeking(true); void seekFromClientX(e.clientX); }}
-            onTouchStart={e => { if (!np.song || !e.touches?.[0]) return; setSeeking(true); void seekFromClientX(e.touches[0].clientX); e.preventDefault(); }}
-          >
-            <div className="np-bar-fill" id="npBarFill" style={{ width: `${progress}%` }} />
-            <div className="np-bar-thumb" id="npBarThumb" style={{ left: `${progress}%` }} />
-          </div>
-          <span className="np-time" id="npDuration">{formatTime(np.duration)}</span>
-        </div>
+        <NowPlayingProgress np={np} npRef={npRef} npPollRef={npPollRef} onSeek={onSeek} />
       </div>
     </header>
   );
