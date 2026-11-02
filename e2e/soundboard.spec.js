@@ -23,6 +23,8 @@ async function mockSoundboard(page, options = {}) {
     setupRequired: Boolean(options.setupMode),
     setupFailuresRemaining: Number(options.setupFailures || 0),
     transientFailures: { ...(options.transientFailures || {}) },
+    failNextAudioFiles: false,
+    refreshFailureAfterUpload: Boolean(options.refreshFailureAfterUpload),
     canManageSettings: options.canManageSettings ?? true,
     settings: Object.fromEntries((options.settingsItems || [
       {
@@ -176,6 +178,10 @@ async function mockSoundboard(page, options = {}) {
       });
     }
     if (apiPath === '/api/audio-files') {
+      if (state.failNextAudioFiles) {
+        state.failNextAudioFiles = false;
+        return route.fulfill({ status: 500, json: { error: 'Temporary soundboard failure' } });
+      }
       return route.fulfill({ json: state.audio });
     }
     if (apiPath === '/api/upload-audio') {
@@ -187,6 +193,10 @@ async function mockSoundboard(page, options = {}) {
         return route.fulfill({ status: 500, json: { error: `Upload rejected for ${fileName}` } });
       }
       addAudioFile(fileName, url.searchParams.get('category') || '');
+      if (state.refreshFailureAfterUpload) {
+        state.refreshFailureAfterUpload = false;
+        state.failNextAudioFiles = true;
+      }
       return route.fulfill({ status: 201, json: { fileName } });
     }
     if (apiPath === '/api/audio-file/rename') {
@@ -388,6 +398,27 @@ test('a partial multi-file upload keeps successful files and allows retrying the
   await expect(page.locator('.upload-file-name')).toHaveText(['broken.ogg']);
   expect(state.audio.root).toContain('success.mp3');
   expect(state.audio.root).not.toContain('broken.ogg');
+});
+
+test('a failed refresh after upload keeps the existing soundboard visible', async ({ page }) => {
+  const state = await mockSoundboard(page, { refreshFailureAfterUpload: true });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Play intro' })).toBeVisible();
+  await expect.poll(() => state.requests.filter(item => item.path === '/api/pause-status').length).toBeGreaterThanOrEqual(1);
+  await page.waitForTimeout(100);
+
+  await page.getByRole('button', { name: 'Add Song' }).click();
+  await page.locator('#uploadFile').setInputFiles({
+    name: 'after-refresh-failure.mp3',
+    mimeType: 'audio/mpeg',
+    buffer: Buffer.from('audio after refresh failure')
+  });
+  await page.getByRole('button', { name: 'Upload' }).click();
+
+  await expect(page.locator('#statusModal')).toHaveClass(/open/);
+  await expect(page.locator('#statusTitle')).toHaveText('Upload complete');
+  await expect(page.locator('#statusMessage')).toContainText('Reload the page');
+  await expect(page.getByRole('button', { name: 'Play intro' })).toBeVisible();
 });
 
 test('a track can be renamed, moved to a category and deleted', async ({ page }) => {

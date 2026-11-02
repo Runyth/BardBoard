@@ -105,9 +105,11 @@ export default function SoundboardClient() {
   }, [fetchApi]);
 
   const refreshFiles = useCallback(async () => {
-    const res = await fetchApi('/api/audio-files');
+    const res = await fetchApi('/api/audio-files', { cache: 'no-store' });
+    if (!res.ok) return false;
     const data = await parseJsonResponse(res);
     setAudio({ root: Array.isArray(data.root) ? data.root : [], categories: data.categories || {} });
+    return true;
   }, [fetchApi]);
 
   const refreshPlaylist = useCallback(async () => {
@@ -719,8 +721,12 @@ export default function SoundboardClient() {
       setUploadCategory('');
       setUploadCategoryActive('');
       setUploadCategoryNew('');
-      await refreshFiles();
-      setStatus({ open: true, title: 'Upload complete', message: 'Your songs are ready.' });
+      const refreshed = await refreshFiles();
+      setStatus({
+        open: true,
+        title: 'Upload complete',
+        message: refreshed ? 'Your songs are ready.' : 'Upload complete. Reload the page to see every track.'
+      });
     } catch (err) {
       if (uploadedCount > 0) {
         setUploadFiles(prev => prev.slice(uploadedCount));
