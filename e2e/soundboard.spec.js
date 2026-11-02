@@ -193,11 +193,29 @@ async function mockSoundboard(page, options = {}) {
         return route.fulfill({ status: 500, json: { error: `Upload rejected for ${fileName}` } });
       }
       addAudioFile(fileName, url.searchParams.get('category') || '');
+      return route.fulfill({ status: 201, json: { fileName } });
+    }
+    if (apiPath === '/api/upload-audio-batch') {
+      const multipart = request.postDataBuffer()?.toString('latin1') || '';
+      const fileNames = [...multipart.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      if (!fileNames.length) return route.fulfill({ status: 400, json: { error: 'No files uploaded' } });
+      const category = url.searchParams.get('category') || '';
+      const uploaded = [];
+      const failed = [];
+      fileNames.forEach((fileName, index) => {
+        if ((options.uploadFailureNames || []).includes(fileName)) {
+          failed.push({ index, fileName, error: `Upload rejected for ${fileName}` });
+          return;
+        }
+        addAudioFile(fileName, category);
+        uploaded.push({ index, fileName });
+      });
+      state.requests[state.requests.length - 1].body = { fileNames };
       if (state.refreshFailureAfterUpload) {
         state.refreshFailureAfterUpload = false;
         state.failNextAudioFiles = true;
       }
-      return route.fulfill({ status: 201, json: { fileName } });
+      return route.fulfill({ json: { ok: failed.length === 0, uploaded, failed } });
     }
     if (apiPath === '/api/audio-file/rename') {
       const source = body.path;
@@ -398,6 +416,25 @@ test('a partial multi-file upload keeps successful files and allows retrying the
   await expect(page.locator('.upload-file-name')).toHaveText(['broken.ogg']);
   expect(state.audio.root).toContain('success.mp3');
   expect(state.audio.root).not.toContain('broken.ogg');
+});
+
+test('a large multi-file upload is sent as one batch request', async ({ page }) => {
+  const state = await mockSoundboard(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add Song' }).click();
+
+  const files = Array.from({ length: 80 }, (_, index) => ({
+    name: `bulk-${index}.mp3`,
+    mimeType: 'audio/mpeg',
+    buffer: Buffer.from(`bulk audio ${index}`)
+  }));
+  await page.locator('#uploadFile').setInputFiles(files);
+  await page.getByRole('button', { name: 'Upload' }).click();
+
+  await expect(page.locator('#statusTitle')).toHaveText('Upload complete');
+  await expect.poll(() => state.requests.filter(item => item.path === '/api/upload-audio-batch').length).toBe(1);
+  expect(state.audio.root.filter(file => file.startsWith('bulk-'))).toHaveLength(80);
+  await expect(page.getByRole('button', { name: 'Play bulk-79' })).toBeVisible();
 });
 
 test('a failed refresh after upload keeps the existing soundboard visible', async ({ page }) => {

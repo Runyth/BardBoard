@@ -286,12 +286,12 @@ export default function SoundboardClient() {
     setStatus({ open: true, title: 'No channel selected', message: 'Select a voice channel first.' });
     return false;
   }, [channelId]);
-  const uploadFileWithProgress = useCallback((file, category, onProgress) => new Promise((resolve, reject) => {
+  const uploadFilesWithProgress = useCallback((files, category, onProgress) => new Promise((resolve, reject) => {
     const fd = new FormData();
-    fd.append('file', file);
+    for (const file of files) fd.append('files', file, file.name);
     const query = category ? `?category=${encodeURIComponent(category)}` : '';
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload-audio' + query, true);
+    xhr.open('POST', '/api/upload-audio-batch' + query, true);
     xhr.withCredentials = true;
 
     xhr.upload.onprogress = event => {
@@ -695,26 +695,36 @@ export default function SoundboardClient() {
 
     setUploadLoading(true);
     setUploadProgress(0);
-    let uploadedCount = 0;
+    const filesToUpload = uploadFiles;
     try {
-      const totalBytes = uploadFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
-      let uploadedBytes = 0;
-      for (const file of uploadFiles) {
-        const fileSize = Number(file.size || 0);
-        await uploadFileWithProgress(file, category, loaded => {
-          const absoluteLoaded = uploadedBytes + Math.min(fileSize, loaded);
-          if (totalBytes > 0) {
-            const pct = Math.round((absoluteLoaded / totalBytes) * 100);
-            setUploadProgress(Math.max(0, Math.min(99, pct)));
-          }
-        });
-        uploadedBytes += fileSize;
-        uploadedCount += 1;
+      const totalBytes = filesToUpload.reduce((sum, file) => sum + Number(file.size || 0), 0);
+      const result = await uploadFilesWithProgress(filesToUpload, category, loaded => {
         if (totalBytes > 0) {
-          const pct = Math.round((uploadedBytes / totalBytes) * 100);
+          const pct = Math.round((loaded / totalBytes) * 100);
           setUploadProgress(Math.max(0, Math.min(99, pct)));
         }
+      });
+      const failed = Array.isArray(result.failed) ? result.failed : [];
+      const uploadedCount = Array.isArray(result.uploaded)
+        ? result.uploaded.length
+        : Math.max(0, filesToUpload.length - failed.length);
+
+      if (failed.length) {
+        const failedIndexes = new Set(
+          failed.map(item => item.index).filter(index => Number.isInteger(index))
+        );
+        setUploadFiles(filesToUpload.filter((_, index) => failedIndexes.has(index)));
+        setUploadProgress(100);
+        await refreshFiles();
+        const failedNames = failed.map(item => item.fileName).filter(Boolean);
+        setStatus({
+          open: true,
+          title: uploadedCount > 0 ? 'Upload partially complete' : 'Upload failed',
+          message: `${uploadedCount} file${uploadedCount === 1 ? '' : 's'} uploaded. ${failedNames.length ? `Failed: ${failedNames.join(', ')}.` : 'Some files could not be uploaded.'}`
+        });
+        return;
       }
+
       setUploadProgress(100);
       setUploadOpen(false);
       setUploadFiles([]);
@@ -728,21 +738,8 @@ export default function SoundboardClient() {
         message: refreshed ? 'Your songs are ready.' : 'Upload complete. Reload the page to see every track.'
       });
     } catch (err) {
-      if (uploadedCount > 0) {
-        setUploadFiles(prev => prev.slice(uploadedCount));
-        try {
-          await refreshFiles();
-        } catch {
-          // The next regular refresh will reconcile the soundboard.
-        }
-        setStatus({
-          open: true,
-          title: 'Upload partially complete',
-          message: `${uploadedCount} file${uploadedCount === 1 ? '' : 's'} uploaded. ${err?.message || 'The next file failed.'}`
-        });
-      } else {
-        setStatus({ open: true, title: 'Upload failed', message: err?.message || 'Upload failed.' });
-      }
+      await refreshFiles().catch(() => {});
+      setStatus({ open: true, title: 'Upload failed', message: err?.message || 'Upload failed.' });
     } finally {
       setUploadLoading(false);
       setUploadProgress(0);
