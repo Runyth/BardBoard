@@ -396,12 +396,47 @@ The settings page is available to admins. It shows editable runtime configuratio
 
 BardBoard reads configuration from:
 
+- A declarative configuration file: set `BARDBOARD_CONFIG_PATH`, or place
+  `bardboard.config.yaml`, `bardboard.config.yml`, `bardboard.config.json`, or
+  `bardboard.config.toml` in the working directory or its `config/` subdirectory.
 - Docker: `/usr/src/app/config/.env` by default, persisted in the `bardboard-config` volume.
 - Local development: `./.env` by default.
-- Custom path: set `BARDBOARD_ENV_PATH`.
+- Custom `.env` path: set `BARDBOARD_ENV_PATH`.
 - Process environment variables, used as defaults when generating a missing config file.
 - Explicit deployment environment values for ports, proxying, uploads, and the
   container session path, which take precedence over persisted values.
+
+Configuration precedence is:
+
+1. Explicit deployment environment values (`WEB_PORT`, `BOT_PORT`, `BACKEND_URL`,
+   `UPLOAD_MAX_MB`, `SESSION_DIR`).
+2. The active YAML/JSON/TOML configuration file.
+3. The `.env` file.
+4. Built-in defaults.
+
+The configuration file uses the same flat keys as the environment variables.
+Values may be written as strings, numbers, or booleans; they are normalized to
+strings. `CORS_ORIGINS` may also be an array. Unknown keys and invalid values
+stop the bot/API at startup with a clear error.
+
+```yaml
+DISCORD_TOKEN: your-token
+AUTH_ADMIN_USER: admin
+AUTH_ADMIN_PASS: change-me
+SESSION_SECRET: generated-or-provided-secret
+NOISES_VOLUME: 2
+CORS_ORIGINS:
+  - https://bardboard.example
+```
+
+The settings and setup pages write to the active configuration file when one is
+configured. Writing may normalize formatting and remove comments in that file.
+Configuration files contain secrets, so restrict their permissions; BardBoard
+creates them with mode `0600`.
+
+In Docker, place the file in the `bardboard-config` volume at
+`/usr/src/app/config/bardboard.config.yaml` (or set `BARDBOARD_CONFIG_PATH`) so
+the bot/API container discovers it.
 
 `SESSION_HOST_DIR` is a Docker Compose variable rather than an application setting,
 so it is not shown or edited by the BardBoard settings page.
@@ -441,7 +476,8 @@ The setup page requires:
 | `BOT_PORT` | No | `3001` | Bot/API port. | Recreate containers |
 | `BACKEND_URL` | No | `http://localhost:3001` | Next.js API proxy target; Compose sets it automatically. | Restart locally; Docker-managed |
 | `UPLOAD_MAX_MB` | No | `50` | Max upload size per file in MB. | Rebuild containers |
-| `BARDBOARD_ENV_PATH` | No | varies | Path to the config file. Docker sets this automatically. | Restart |
+| `BARDBOARD_ENV_PATH` | No | varies | Path to the legacy `.env` file. Docker sets this automatically. | Restart |
+| `BARDBOARD_CONFIG_PATH` | No | auto-detected | Path to a YAML/JSON/TOML configuration file. | Restart |
 
 ## Troubleshooting
 

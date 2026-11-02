@@ -47,10 +47,14 @@ Compose.
 
 ## Configuration
 
-- `server/app.js` calls `ensureEnvFile()`, then loads `.env` from
-  `BARDBOARD_ENV_PATH` or the repository root.
-- First-boot setup writes credentials to `.env`. The file is git-ignored; never
-  commit tokens, passwords, session secrets, or generated configuration.
+- `server/app.js` calls `ensureEnvFile()`, loads `.env` from
+  `BARDBOARD_ENV_PATH` or the repository root, then loads an optional YAML/JSON/TOML
+  config file from `BARDBOARD_CONFIG_PATH`, `bardboard.config.*`, or `config/bardboard.config.*`.
+- The declarative config file overrides `.env`; deployment environment values for
+  ports, proxying, uploads, and `SESSION_DIR` still override both.
+- First-boot setup and the settings page write to the active config file when one
+  is configured, otherwise to `.env`. These files are git-ignored; never commit
+  tokens, passwords, session secrets, or generated configuration.
 - `SESSION_SECRET` is generated when missing. Do not restore a hardcoded default.
 - `SESSION_DIR` defaults to `sessions/`; audio files live in `audio-files/`.
 - In Docker, `WEB_PORT`, `BOT_PORT`, `BACKEND_URL`, `UPLOAD_MAX_MB`, and
