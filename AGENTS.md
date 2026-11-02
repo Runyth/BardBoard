@@ -84,6 +84,12 @@ Compose.
 - Do not add code comments unless they are necessary to explain non-obvious
   behavior.
 
+## UI/UX
+
+- Always research best practices for simple, intuitive dashboard web UI design before making UI/UX decisions.
+- For voice-agent/dashboard interfaces prefer clear states (idle/connecting/playing), explicit affordances, stop/interrupt controls, error recovery, and confirmation for destructive actions.
+- Use verb-noun CTAs that mirror the question/title, prefer accessible controls, and follow existing design patterns.
+
 ## Commits
 
 Follow the [Capitalized Conventional Commits Dialect](https://gist.github.com/Akkitto/92154570147ba475e6bca70e709368ff).
