@@ -326,7 +326,7 @@ You can add sounds in two ways.
 
 Click **Add Song**, then drag files into the upload modal or browse for files. You can:
 
-- Upload multiple files at once.
+- Upload any number of files in one drag-and-drop; the dashboard sends them as a single batch request.
 - Remove files from the pending upload list.
 - Choose an existing category.
 - Create a new category during upload.
