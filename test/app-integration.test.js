@@ -212,6 +212,99 @@ describe('complete Express application', { concurrency: false }, () => {
     });
   });
 
+  test('the last active admin cannot be demoted, disabled, or deleted', async () => {
+    await withTestServer(app, async baseUrl => {
+      const admin = createCookieClient(baseUrl);
+      await admin('/auth/login', {
+        method: 'POST',
+        body: { username: 'admin', password: 'admin-secret' }
+      });
+
+      const users = await admin('/users');
+      const adminUser = users.body.users.find(user => user.role === 'admin');
+      assert.ok(adminUser);
+
+      assert.equal((await admin(`/users/${adminUser.id}`, {
+        method: 'PATCH',
+        body: { role: 'user' }
+      })).status, 409);
+      assert.equal((await admin(`/users/${adminUser.id}`, {
+        method: 'PATCH',
+        body: { disabled: true }
+      })).status, 409);
+      assert.equal((await admin(`/users/${adminUser.id}`, {
+        method: 'DELETE'
+      })).status, 409);
+    });
+  });
+
+  test('admins manage users, roles, passwords, and session invalidation', async () => {
+    await withTestServer(app, async baseUrl => {
+      const admin = createCookieClient(baseUrl);
+      await admin('/auth/login', {
+        method: 'POST',
+        body: { username: 'admin', password: 'admin-secret' }
+      });
+
+      const created = await admin('/users', {
+        method: 'POST',
+        body: { username: 'managed-user', password: 'managed-secret', role: 'user' }
+      });
+      assert.equal(created.status, 201);
+      const userId = created.body.user.id;
+
+      try {
+        const member = createCookieClient(baseUrl);
+        const login = await member('/auth/login', {
+          method: 'POST',
+          body: { username: 'managed-user', password: 'managed-secret' }
+        });
+        assert.deepEqual(login.body, { ok: true, role: 'user' });
+        assert.equal((await member('/settings/config')).status, 403);
+        assert.equal((await member('/users')).status, 403);
+        assert.equal((await member('/play-audio', {
+          method: 'POST',
+          body: { fileName: 'missing.mp3', channelId: 'invalid' }
+        })).status, 400);
+
+        const promoted = await admin(`/users/${userId}`, {
+          method: 'PATCH',
+          body: { role: 'admin' }
+        });
+        assert.equal(promoted.status, 200);
+        assert.equal(promoted.body.user.role, 'admin');
+        assert.equal((await member('/voice-channels')).status, 401);
+
+        const promotedLogin = await member('/auth/login', {
+          method: 'POST',
+          body: { username: 'managed-user', password: 'managed-secret' }
+        });
+        assert.deepEqual(promotedLogin.body, { ok: true, role: 'admin' });
+        assert.equal((await member('/users')).status, 200);
+
+        const passwordReset = await admin(`/users/${userId}/password`, {
+          method: 'POST',
+          body: { password: 'managed-secret-2' }
+        });
+        assert.equal(passwordReset.status, 200);
+        assert.equal((await member('/voice-channels')).status, 401);
+
+        const oldPassword = await member('/auth/login', {
+          method: 'POST',
+          body: { username: 'managed-user', password: 'managed-secret' }
+        });
+        assert.equal(oldPassword.status, 401);
+        const newPassword = await member('/auth/login', {
+          method: 'POST',
+          body: { username: 'managed-user', password: 'managed-secret-2' }
+        });
+        assert.deepEqual(newPassword.body, { ok: true, role: 'admin' });
+      } finally {
+        assert.equal((await admin(`/users/${userId}`, { method: 'DELETE' })).status, 200);
+      }
+    });
+  });
+
   test('setup mode exposes only setup status and health', async () => {
     writeTestConfig('');
     try {
@@ -291,8 +384,12 @@ describe('complete Express application', { concurrency: false }, () => {
 
         const saved = fs.readFileSync(envPath, 'utf8');
         assert.match(saved, /^DISCORD_TOKEN=new-discord-token$/m);
-        assert.match(saved, /^AUTH_ADMIN_USER=new-admin$/m);
-        assert.match(saved, /^AUTH_READONLY_USER=new-viewer$/m);
+
+        const users = JSON.parse(fs.readFileSync(path.join(tempDir, 'users.json'), 'utf8')).users;
+        assert.equal(users.some(user => user.username === 'new-admin' && user.role === 'admin'), true);
+        assert.equal(users.some(user => user.username === 'new-viewer' && user.role === 'user'), true);
+        assert.equal(users.every(user => typeof user.passwordHash === 'string'), true);
+        assert.equal(users.some(user => String(user.passwordHash).includes('new-secret')), false);
       });
     } finally {
       discordClient.login = originalLogin;

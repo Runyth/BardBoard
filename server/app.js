@@ -29,7 +29,9 @@ const createAudioRoutes = require('./routes/audio');
 const createPlaylistRoutes = require('./routes/playlist');
 const createFileRoutes = require('./routes/files');
 const openApiSpec = require('./docs/openapi');
-const { ensureEnvFile, getEnvFilePath, loadConfigFileIntoEnv, readCurrentConfig, validateInput, writeConfig, isConfiguredForFirstBoot } = require('./utils/envConfig');
+const { ensureEnvFile, getActiveConfigPath, getEnvFilePath, loadConfigFileIntoEnv, readCurrentConfig, validateInput, writeConfig } = require('./utils/envConfig');
+const { createUserStore, getUsersFilePath, hasPermission, PERMISSIONS, ROLES } = require('./utils/users');
+const createUserRoutes = require('./routes/users');
 const deploymentEnvKeys = ['WEB_PORT', 'BOT_PORT', 'BACKEND_URL', 'UPLOAD_MAX_MB', 'SESSION_DIR'];
 const deploymentEnv = Object.fromEntries(deploymentEnvKeys
   .filter(key => Object.prototype.hasOwnProperty.call(process.env, key))
@@ -39,16 +41,21 @@ require('dotenv').config({ path: getEnvFilePath(), override: true });
 loadConfigFileIntoEnv();
 Object.assign(process.env, deploymentEnv);
 
+const userStore = createUserStore({
+  filePath: getUsersFilePath({
+    configPath: getActiveConfigPath(),
+    envPath: getEnvFilePath()
+  }),
+  legacyUsers: [
+    { username: process.env.AUTH_ADMIN_USER, password: process.env.AUTH_ADMIN_PASS, role: 'admin' },
+    { username: process.env.AUTH_READONLY_USER, password: process.env.AUTH_READONLY_PASS, role: 'user' }
+  ]
+});
+
 const app = express();
 const discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const audioService = createDiscordAudioService(discordClient);
 
-function safeEqual(a, b) {
-  const aBuf = Buffer.from(a || '');
-  const bBuf = Buffer.from(b || '');
-  if (aBuf.length !== bBuf.length) return false;
-  return require('crypto').timingSafeEqual(aBuf, bBuf);
-}
 
 const corsOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
@@ -111,33 +118,42 @@ withFsRetry(sessionStore, 'set');
 withFsRetry(sessionStore, 'touch');
 withMissingSessionAsEmpty(sessionStore);
 
+function hasDiscordToken() {
+  const item = readCurrentConfig().find(configItem => configItem.key === 'DISCORD_TOKEN');
+  const token = String(item?.value || '').trim();
+  return Boolean(token && !/pasteyourdiscordbottokenhere/i.test(token));
+}
+
 function isSetupRequiredNow() {
-  const currentItems = readCurrentConfig();
-  const values = {};
-  currentItems.forEach(item => {
-    values[item.key] = item.value;
-  });
-  return !isConfiguredForFirstBoot(values);
+  return !hasDiscordToken() || !userStore.hasAdmin();
 }
 
 function getAuthConfig() {
-  const adminUser = process.env.AUTH_ADMIN_USER || '';
-  const adminPass = process.env.AUTH_ADMIN_PASS || '';
-  const userUser = process.env.AUTH_READONLY_USER || '';
-  const userPass = process.env.AUTH_READONLY_PASS || '';
-  const rememberDays = Math.max(1, Number.parseInt(process.env.LOGIN_REMEMBER_DAYS || '30', 10));
-  const adminConfigured = Boolean(adminUser && adminPass);
-  const readonlyConfigured = Boolean(userUser && userPass);
   return {
-    adminUser,
-    adminPass,
-    userUser,
-    userPass,
-    rememberDays,
-    adminConfigured,
-    readonlyConfigured,
-    authEnabled: adminConfigured || readonlyConfigured
+    rememberDays: Math.max(1, Number.parseInt(process.env.LOGIN_REMEMBER_DAYS || '30', 10)),
+    authEnabled: userStore.hasUsers()
   };
+}
+
+function getSessionUser(req) {
+  if (!req.session?.authenticated) return null;
+  if (req.session.userId) {
+    const user = userStore.findById(req.session.userId);
+    if (!user || user.disabled || user.authVersion !== req.session.authVersion) return null;
+    return user;
+  }
+  return {
+    id: null,
+    username: req.session.username || 'legacy',
+    role: req.session.role === 'admin' ? 'admin' : 'user',
+    disabled: false,
+    authVersion: null
+  };
+}
+
+function permissionsForUser(user) {
+  if (!user || !ROLES[user.role]) return [];
+  return ROLES[user.role].permissions.slice();
 }
 
 function cleanupNonRememberSessions() {
@@ -238,28 +254,39 @@ app.post('/setup/complete', (req, res) => {
   if (readonlyEnabled && (!readonlyUserInput || !readonlyPassInput)) {
     return res.status(400).json({ error: 'Readonly credentials must include both username and password' });
   }
+  if (readonlyEnabled && readonlyUserInput.toLowerCase() === adminUserInput.toLowerCase()) {
+    return res.status(400).json({ error: 'Admin and standard user usernames must be different' });
+  }
+
+  let admin;
+  try {
+    admin = userStore.upsertForSetup(adminUserInput, adminPassInput, 'admin');
+    if (readonlyEnabled) {
+      userStore.upsertForSetup(readonlyUserInput, readonlyPassInput, 'user');
+    }
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ error: error.message });
+  }
 
   const changedKeys = writeConfig({
     DISCORD_TOKEN: discordToken,
-    AUTH_ADMIN_USER: adminUserInput,
-    AUTH_ADMIN_PASS: adminPassInput,
-    AUTH_READONLY_USER: readonlyEnabled ? readonlyUserInput : '',
-    AUTH_READONLY_PASS: readonlyEnabled ? readonlyPassInput : '',
     BACKEND_URL: process.env.BACKEND_URL || `http://localhost:${process.env.BOT_PORT || '3001'}`
   });
 
   process.env.DISCORD_TOKEN = discordToken;
-  process.env.AUTH_ADMIN_USER = adminUserInput;
-  process.env.AUTH_ADMIN_PASS = adminPassInput;
-  process.env.AUTH_READONLY_USER = readonlyEnabled ? readonlyUserInput : '';
-  process.env.AUTH_READONLY_PASS = readonlyEnabled ? readonlyPassInput : '';
 
-  req.session.authenticated = true;
-  req.session.role = 'admin';
-  req.session.remember = false;
-  req.session.save(() => {
-    ensureDiscordLogin();
-    res.status(200).json({ ok: true, changedKeys, restartRequired: true });
+  req.session.regenerate(error => {
+    if (error) return res.status(500).json({ error: 'Setup failed' });
+    req.session.authenticated = true;
+    req.session.userId = admin.id;
+    req.session.username = admin.username;
+    req.session.role = admin.role;
+    req.session.authVersion = userStore.findById(admin.id)?.authVersion || 1;
+    req.session.remember = false;
+    req.session.save(() => {
+      ensureDiscordLogin();
+      res.status(200).json({ ok: true, changedKeys, restartRequired: true });
+    });
   });
 });
 
@@ -269,23 +296,27 @@ app.post('/auth/login', (req, res) => {
 
   const username = (req.body.username || '').toString();
   const password = (req.body.password || '').toString();
-  let role = '';
-  if (auth.adminConfigured && safeEqual(username, auth.adminUser) && safeEqual(password, auth.adminPass)) {
-    role = 'admin';
-  } else if (auth.readonlyConfigured && safeEqual(username, auth.userUser) && safeEqual(password, auth.userPass)) {
-    role = 'user';
-  }
-  if (!role) {
+  const user = userStore.verifyCredentials(username, password);
+  if (!user) {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  req.session.authenticated = true;
-  req.session.role = role;
-  req.session.remember = Boolean(req.body.remember);
-  if (req.body.remember) {
-    req.session.cookie.maxAge = auth.rememberDays * 24 * 60 * 60 * 1000;
-  }
-  return res.status(200).json({ ok: true, role });
+  req.session.regenerate(error => {
+    if (error) return res.status(500).json({ error: 'Login failed' });
+    req.session.authenticated = true;
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.role = user.role;
+    req.session.authVersion = user.authVersion;
+    req.session.remember = Boolean(req.body.remember);
+    if (req.body.remember) {
+      req.session.cookie.maxAge = auth.rememberDays * 24 * 60 * 60 * 1000;
+    }
+    req.session.save(saveError => {
+      if (saveError) return res.status(500).json({ error: 'Login failed' });
+      return res.status(200).json({ ok: true, role: user.role });
+    });
+  });
 });
 
 app.post('/auth/logout', (req, res) => {
@@ -296,13 +327,16 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/auth/status', (req, res) => {
   const auth = getAuthConfig();
-  const role = req.session?.authenticated ? (req.session.role || 'user') : null;
+  const user = getSessionUser(req);
   res.status(200).json({
     setupRequired: isSetupRequiredNow(),
     authEnabled: Boolean(auth.authEnabled),
-    authenticated: Boolean(req.session && req.session.authenticated),
-    role,
-    canManageSettings: role === 'admin'
+    authenticated: Boolean(user),
+    username: user?.username || null,
+    role: user?.role || null,
+    permissions: permissionsForUser(user),
+    canManageSettings: hasPermission(user, PERMISSIONS.SETTINGS_MANAGE),
+    canManageUsers: hasPermission(user, PERMISSIONS.USERS_MANAGE)
   });
 });
 
@@ -315,21 +349,57 @@ app.use((req, res, next) => {
     return res.status(503).json({ error: 'Initial setup required', setupRequired: true });
   }
   if (!auth.authEnabled) return next();
-  if (req.session && req.session.authenticated) return next();
+  const user = getSessionUser(req);
+  if (user) {
+    req.user = user;
+    return next();
+  }
   if (req.path === '/auth/login' || req.path === '/auth/logout' || req.path === '/auth/status') return next();
   if (req.path === '/health') return next();
   if (req.path === '/api-docs') return res.redirect('/login');
   return res.status(401).json({ error: 'Unauthorized' });
 });
 
+const ACTION_PERMISSIONS = new Map([
+  ['POST /play-audio', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /toggle-pause', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /stop-audio', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /switch-channel', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /leave-channel', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /toggle-repeat', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /set-volume', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /seek', PERMISSIONS.AUDIO_CONTROL],
+  ['POST /playlist/add', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /playlist/set', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /playlist/shuffle', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /playlist/clear', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /playlist/play', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /playlist/skip', PERMISSIONS.PLAYLIST_MANAGE],
+  ['POST /upload-audio', PERMISSIONS.FILES_MANAGE],
+  ['POST /upload-audio-batch', PERMISSIONS.FILES_MANAGE],
+  ['POST /audio-file/move', PERMISSIONS.FILES_MANAGE],
+  ['POST /audio-file/rename', PERMISSIONS.FILES_MANAGE],
+  ['DELETE /audio-file', PERMISSIONS.FILES_MANAGE],
+  ['POST /audio-category', PERMISSIONS.FILES_MANAGE],
+  ['POST /audio-category/rename', PERMISSIONS.FILES_MANAGE],
+  ['DELETE /audio-category', PERMISSIONS.FILES_MANAGE]
+]);
+
+function permissionForRequest(req) {
+  if (req.path === '/settings/restart') return PERMISSIONS.SYSTEM_RESTART;
+  if (req.path.startsWith('/settings/')) return PERMISSIONS.SETTINGS_MANAGE;
+  if (req.path === '/users' || req.path.startsWith('/users/')) return PERMISSIONS.USERS_MANAGE;
+  return ACTION_PERMISSIONS.get(`${req.method} ${req.path}`) || null;
+}
+
 app.use((req, res, next) => {
-  const auth = getAuthConfig();
-  if (!req.path.startsWith('/settings/')) return next();
-  if (req.path === '/settings/restart' && (!auth.authEnabled || isSetupRequiredNow())) return next();
-  const role = req.session?.role || '';
-  if (role === 'admin') return next();
+  const permission = permissionForRequest(req);
+  if (!permission) return next();
+  if (hasPermission(req.user, permission)) return next();
   return res.status(403).json({ error: 'Forbidden' });
 });
+
+app.use('/users', createUserRoutes(userStore));
 
 app.get('/env-config', (req, res) => {
   const uploadMaxMb = Math.max(1, Number.parseInt(process.env.UPLOAD_MAX_MB || '50', 10));

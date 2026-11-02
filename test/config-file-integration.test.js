@@ -55,7 +55,7 @@ describe('configuration file integration', { concurrency: false }, () => {
       const settings = await client('/settings/config');
       const items = Object.fromEntries(settings.body.items.map(item => [item.key, item.value]));
       assert.equal(items.NOISES_VOLUME, '3');
-      assert.equal(items.AUTH_ADMIN_USER, 'admin');
+      assert.equal(items.AUTH_ADMIN_USER, undefined);
     });
   });
 

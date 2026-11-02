@@ -29,10 +29,10 @@ const {
 
 const CONFIG_FIELDS = [
   { key: 'DISCORD_TOKEN', label: 'Discord Token', section: 'Required Discord Settings', description: 'Bot token from the Discord Developer Portal.', secret: true, restartScope: 'bot' },
-  { key: 'AUTH_ADMIN_USER', label: 'Admin Username', section: 'Auth and Session Settings', description: 'Username for admin login.', restartScope: 'bot' },
-  { key: 'AUTH_ADMIN_PASS', label: 'Admin Password', section: 'Auth and Session Settings', description: 'Password for admin login.', secret: true, restartScope: 'bot' },
-  { key: 'AUTH_READONLY_USER', label: 'User Username', section: 'Auth and Session Settings', description: 'Username for readonly user login.', restartScope: 'bot' },
-  { key: 'AUTH_READONLY_PASS', label: 'User Password', section: 'Auth and Session Settings', description: 'Password for readonly user login.', secret: true, restartScope: 'bot' },
+  { key: 'AUTH_ADMIN_USER', settingsEditable: false, label: 'Admin Username', section: 'Auth and Session Settings', description: 'Username for admin login.', restartScope: 'bot' },
+  { key: 'AUTH_ADMIN_PASS', settingsEditable: false, label: 'Admin Password', section: 'Auth and Session Settings', description: 'Password for admin login.', secret: true, restartScope: 'bot' },
+  { key: 'AUTH_READONLY_USER', settingsEditable: false, label: 'User Username', section: 'Auth and Session Settings', description: 'Username for readonly user login.', restartScope: 'bot' },
+  { key: 'AUTH_READONLY_PASS', settingsEditable: false, label: 'User Password', section: 'Auth and Session Settings', description: 'Password for readonly user login.', secret: true, restartScope: 'bot' },
   { key: 'SESSION_SECRET', label: 'Session Secret', section: 'Auth and Session Settings', description: 'Secret used to sign session cookies.', secret: true, restartScope: 'bot' },
   { key: 'LOGIN_REMEMBER_DAYS', label: 'Login Remember Days', section: 'Auth and Session Settings', description: 'Remember-me cookie duration in days.', type: 'integer', restartScope: 'bot' },
   { key: 'SESSION_DIR', label: 'Session Directory', section: 'Auth and Session Settings', description: 'Directory where session files are stored.', restartScope: 'bot' },
@@ -93,6 +93,10 @@ function getEnvFilePath() {
     return path.resolve(explicitEnvPath);
   }
   return path.join(process.cwd(), '.env');
+}
+
+function getActiveConfigPath() {
+  return activeConfigPath;
 }
 
 function generateSessionSecret() {
@@ -382,6 +386,7 @@ module.exports = {
   CONFIG_FIELDS,
   DEFAULT_CONFIG_VALUES,
   ensureEnvFile,
+  getActiveConfigPath,
   getEnvFilePath,
   isConfiguredForFirstBoot,
   loadConfigFileIntoEnv,

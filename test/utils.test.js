@@ -103,15 +103,16 @@ describe('environment configuration', () => {
   });
 
   test('validateInput filters unknown keys and validates numeric fields', () => {
-    const items = currentItems({ AUTH_ADMIN_PASS: 'existing' });
+    const items = currentItems({ SESSION_SECRET: 'existing' });
     assert.deepEqual(validateInput({ UNKNOWN: 'ignored', RATE_LIMIT_AUDIO: '25' }, items), {
       values: { RATE_LIMIT_AUDIO: '25' }
     });
     assert.match(validateInput({ RATE_LIMIT_AUDIO: '-1' }, items).error, /Invalid integer/);
     assert.match(validateInput({ RATE_LIMIT_AUDIO: '1.5' }, items).error, /Invalid integer/);
     assert.match(validateInput({ NOISES_VOLUME: '10.1' }, items).error, /Invalid number/);
-    assert.deepEqual(validateInput({ AUTH_ADMIN_PASS: '' }, items), { values: {} });
-    assert.match(validateInput({ AUTH_ADMIN_USER: 'x'.repeat(2049) }, items).error, /Value too long/);
+    assert.deepEqual(validateInput({ SESSION_SECRET: '' }, items), { values: {} });
+    assert.deepEqual(validateInput({ AUTH_ADMIN_USER: 'ignored' }, items), { values: {} });
+    assert.match(validateInput({ NOISES_FOLDER: 'x'.repeat(2049) }, items).error, /Value too long/);
   });
 
   test('ensureEnvFile creates defaults and writeConfig round-trips quoted secrets', () => {

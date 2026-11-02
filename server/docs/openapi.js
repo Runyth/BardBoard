@@ -34,10 +34,107 @@ const openApiSpec = {
     { name: 'files', description: 'Audio library upload/list/delete operations' },
     { name: 'playlist', description: 'Queue management and playback flow' },
     { name: 'settings', description: 'Environment configuration management' },
+    { name: 'users', description: 'User accounts, roles, and access management' },
     { name: 'system', description: 'App configuration and service metadata' }
   ],
   security: [{ sessionAuth: [] }],
   paths: {
+    '/users': {
+      get: {
+        tags: ['users'],
+        summary: 'List users and roles',
+        responses: {
+          200: { description: 'Users and role definitions' },
+          403: { description: 'Forbidden' }
+        }
+      },
+      post: {
+        tags: ['users'],
+        summary: 'Create a user',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['username', 'password'],
+                properties: {
+                  username: { type: 'string' },
+                  password: { type: 'string', minLength: 8 },
+                  role: { type: 'string', enum: ['admin', 'user'] }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'User created' },
+          400: { description: 'Validation error' },
+          409: { description: 'Username already exists' }
+        }
+      }
+    },
+    '/users/{id}': {
+      patch: {
+        tags: ['users'],
+        summary: 'Update a user',
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  username: { type: 'string' },
+                  role: { type: 'string', enum: ['admin', 'user'] },
+                  disabled: { type: 'boolean' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'User updated' },
+          404: { description: 'User not found' },
+          409: { description: 'Conflict or last admin protection' }
+        }
+      },
+      delete: {
+        tags: ['users'],
+        summary: 'Delete a user',
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'User deleted' },
+          404: { description: 'User not found' },
+          409: { description: 'Last admin protection' }
+        }
+      }
+    },
+    '/users/{id}/password': {
+      post: {
+        tags: ['users'],
+        summary: 'Reset a user password',
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['password'],
+                properties: { password: { type: 'string', minLength: 8 } }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Password updated' },
+          400: { description: 'Validation error' },
+          404: { description: 'User not found' }
+        }
+      }
+    },
     '/env-config': {
       get: {
         tags: ['system'],
