@@ -213,28 +213,34 @@ export default function SoundboardClient() {
   }, [uploadCategoryOpen]);
 
   useEffect(() => {
-    if (!channelId) return;
+    let active = true;
     (async () => {
       try {
         await refreshFiles();
+        if (!channelId) return;
         await refreshPlaylist();
         const [repeatRes, volumeRes, pauseRes] = await Promise.all([
           fetchApi('/api/repeat-status?channelId=' + encodeURIComponent(channelId)),
           fetchApi('/api/get-volume?channelId=' + encodeURIComponent(channelId)),
           fetchApi('/api/pause-status?channelId=' + encodeURIComponent(channelId))
         ]);
+        if (!active) return;
         setRepeatEnabled(Boolean((await parseJsonResponse(repeatRes)).repeatEnabled));
         const volumePct = Math.round(((await parseJsonResponse(volumeRes)).volume ?? 0.5) * 100);
+        if (!active) return;
         setVolume(volumePct);
         lastSentVolumeRef.current = volumePct;
         if (volumePct > 0) lastNonZeroVolumeRef.current = volumePct;
         setPaused(Boolean((await parseJsonResponse(pauseRes)).paused));
         await updateNowPlaying();
       } finally {
-        setReady(true);
-        document.body.classList.add('ready');
+        if (active) {
+          setReady(true);
+          document.body.classList.add('ready');
+        }
       }
     })().catch(console.error);
+    return () => { active = false; };
   }, [channelId, fetchApi, refreshFiles, refreshPlaylist, updateNowPlaying]);
 
   useEffect(() => {
