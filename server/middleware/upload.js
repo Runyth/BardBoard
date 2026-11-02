@@ -17,7 +17,6 @@
 */
 const fs = require('fs');
 const path = require('path');
-const { pipeline } = require('stream');
 const multer = require('multer');
 const { AUDIO_DIR, ALLOWED_EXT } = require('../constants');
 const { sanitizeCategory } = require('../utils/path');
@@ -33,50 +32,81 @@ function createUpload(options = {}) {
     _handleFile(req, file, cb) {
       const input = String(req.query.category || '').trim();
       const category = sanitizeCategory(input);
-      if (input && category !== input) return cb(new Error('Invalid category'));
-
-      const targetDir = category ? path.join(audioDir, category) : audioDir;
       const fileName = path.basename(file.originalname);
+      const targetDir = category ? path.join(audioDir, category) : audioDir;
       const targetPath = path.join(targetDir, fileName);
       let output;
       let opened = false;
+      let settled = false;
 
+      const recordFailure = error => {
+        const message = error?.message || 'Upload failed';
+        if (file.stream && typeof file.stream.resume === 'function') file.stream.resume();
+        if (Array.isArray(req.uploadFailures)) {
+          req.uploadFailures.push({ index: file._batchIndex, fileName, error: message });
+          return cb(null, { skipped: true, index: file._batchIndex, filename: fileName });
+        }
+        return cb(error);
+      };
+
+      if (input && category !== input) return recordFailure(new Error('Invalid category'));
+
+      let fd;
       try {
         fsImpl.mkdirSync(targetDir, { recursive: true });
-        output = fsImpl.createWriteStream(targetPath, { flags: 'wx' });
+        fd = fsImpl.openSync(targetPath, 'wx');
+        output = fsImpl.createWriteStream(targetPath, { fd, autoClose: true });
+        opened = true;
       } catch (error) {
-        return cb(error);
+        if (fd !== undefined) {
+          try {
+            fsImpl.closeSync(fd);
+          } catch {
+            // The descriptor may already be closed by a failed stream setup.
+          }
+        }
+        const uploadError = error.code === 'EEXIST'
+          ? Object.assign(new Error('A file with the same name already exists'), { code: error.code })
+          : error;
+        return recordFailure(uploadError);
       }
 
-      output.once('open', () => {
-        opened = true;
-      });
+      const finish = error => {
+        if (settled) return;
+        settled = true;
 
-      pipeline(file.stream, output, error => {
         if (!error) {
           return cb(null, {
             destination: targetDir,
             filename: fileName,
             path: targetPath,
-            size: output.bytesWritten
+            size: output.bytesWritten,
+            index: file._batchIndex
           });
         }
 
         const uploadError = error.code === 'EEXIST'
           ? Object.assign(new Error('A file with the same name already exists'), { code: error.code })
           : error;
-        if (!opened) return cb(uploadError);
+        if (file.stream && typeof file.stream.unpipe === 'function') file.stream.unpipe(output);
+        if (!opened) return recordFailure(uploadError);
 
         fsImpl.unlink(targetPath, cleanupError => {
           if (cleanupError && cleanupError.code !== 'ENOENT') {
             console.warn('Could not remove partial upload:', cleanupError.message);
           }
-          cb(uploadError);
+          recordFailure(uploadError);
         });
-      });
+      };
+
+      output.on('error', finish);
+      file.stream.on('error', finish);
+      file.stream.pipe(output);
+      output.on('finish', () => finish());
     },
 
     _removeFile(_req, file, cb) {
+      if (!file.path) return cb(null);
       fsImpl.unlink(file.path, cb);
     }
   };
@@ -87,8 +117,20 @@ function createUpload(options = {}) {
       fileSize: maxUploadMb * 1024 * 1024
     },
     fileFilter: (req, file, cb) => {
+      const index = Number.isInteger(req._batchIndex) ? req._batchIndex : 0;
+      req._batchIndex = index + 1;
+      file._batchIndex = index;
+
       const ext = path.extname(file.originalname).toLowerCase();
       if (!allowedExt.has(ext)) {
+        if (Array.isArray(req.uploadFailures)) {
+          req.uploadFailures.push({
+            index,
+            fileName: path.basename(file.originalname),
+            error: 'Unsupported file type'
+          });
+          return cb(null, false);
+        }
         return cb(new Error('Unsupported file type'));
       }
       cb(null, true);

@@ -80,6 +80,68 @@ describe('file and category API', () => {
     });
   });
 
+  test('POST /upload-audio-batch stores every file and reports per-file failures', async () => {
+    await withAudioDir(async audioDir => {
+      fs.mkdirSync(path.join(audioDir, 'Music'));
+      fs.writeFileSync(path.join(audioDir, 'Music', 'existing.mp3'), 'original');
+
+      await callFileApi(audioDir, createAudioService(), async baseUrl => {
+        const form = new FormData();
+        form.append('files', new Blob(['first audio']), 'first.mp3');
+        form.append('files', new Blob(['second audio']), 'second.wav');
+        form.append('files', new Blob(['replacement']), 'existing.mp3');
+        form.append('files', new Blob(['text']), 'notes.txt');
+
+        const response = await request(baseUrl, '/upload-audio-batch?category=Music', {
+          method: 'POST',
+          body: form
+        });
+
+        assert.equal(response.status, 200, JSON.stringify(response.body));
+        assert.equal(response.body.ok, false);
+        assert.deepEqual(
+          response.body.uploaded.map(item => item.fileName).sort(),
+          ['first.mp3', 'second.wav']
+        );
+        assert.deepEqual(
+          response.body.failed.map(item => item.fileName).sort(),
+          ['existing.mp3', 'notes.txt']
+        );
+        assert.equal(fs.readFileSync(path.join(audioDir, 'Music', 'first.mp3'), 'utf8'), 'first audio');
+        assert.equal(fs.readFileSync(path.join(audioDir, 'Music', 'second.wav'), 'utf8'), 'second audio');
+        assert.equal(fs.readFileSync(path.join(audioDir, 'Music', 'existing.mp3'), 'utf8'), 'original');
+        assert.equal(fs.existsSync(path.join(audioDir, 'Music', 'notes.txt')), false);
+      });
+    });
+  });
+
+  test('batch upload counts as one request for the file rate limit', async () => {
+    const previousLimit = process.env.RATE_LIMIT_FILES;
+    process.env.RATE_LIMIT_FILES = '1';
+    try {
+      await withAudioDir(async audioDir => {
+        await callFileApi(audioDir, createAudioService(), async baseUrl => {
+          const form = new FormData();
+          for (let index = 0; index < 5; index += 1) {
+            form.append('files', new Blob([`audio ${index}`]), `track-${index}.mp3`);
+          }
+
+          const response = await request(baseUrl, '/upload-audio-batch', {
+            method: 'POST',
+            body: form
+          });
+
+          assert.equal(response.status, 200);
+          assert.equal(response.body.uploaded.length, 5);
+          assert.deepEqual(response.body.failed, []);
+        });
+      });
+    } finally {
+      if (previousLimit === undefined) delete process.env.RATE_LIMIT_FILES;
+      else process.env.RATE_LIMIT_FILES = previousLimit;
+    }
+  });
+
   test('upload rejects missing, unsupported, invalid-category and duplicate files', async () => {
     await withAudioDir(async audioDir => {
       fs.writeFileSync(path.join(audioDir, 'existing.mp3'), 'original');

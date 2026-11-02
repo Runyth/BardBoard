@@ -98,6 +98,41 @@ function createFileRoutes(audioService, options = {}) {
   });
 
   /**
+   * Handles the `/upload-audio-batch` API endpoint to upload many files in one request.
+   *
+   * @route POST /upload-audio-batch
+   * @query {string} category - Optional category folder name.
+   */
+  router.post('/upload-audio-batch', (req, res) => {
+    const input = String(req.query.category || '').trim();
+    const category = sanitizeCategory(input);
+    if (input && category !== input) return res.status(400).json({ error: 'Invalid category' });
+
+    req.uploadFailures = [];
+    req._batchIndex = 0;
+
+    uploadMiddleware.array('files')(req, res, err => {
+      if (err) {
+        if (['EACCES', 'EIO', 'ENOSPC', 'EROFS'].includes(err.code)) {
+          console.error('Batch upload failed:', err);
+          return res.status(500).json({ error: 'Upload failed' });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+
+      const files = Array.isArray(req.files) ? req.files : [];
+      const uploaded = files
+        .filter(file => !file.skipped)
+        .map(file => ({ index: file.index, fileName: file.filename }));
+      const failed = req.uploadFailures
+        .slice()
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+      return res.json({ ok: failed.length === 0, uploaded, failed });
+    });
+  });
+
+  /**
    * Handles the `/audio-file` API endpoint to delete a specific audio file.
    *
    * @route DELETE /audio-file

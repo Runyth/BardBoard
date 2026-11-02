@@ -164,6 +164,73 @@ const openApiSpec = {
         }
       }
     },
+    '/upload-audio-batch': {
+      post: {
+        tags: ['files'],
+        summary: 'Upload many audio files in one request',
+        parameters: [{
+          in: 'query',
+          name: 'category',
+          schema: { type: 'string' },
+          required: false,
+          description: 'Optional category folder name'
+        }],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['files'],
+                properties: {
+                  files: {
+                    type: 'array',
+                    items: { type: 'string', format: 'binary' }
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Per-file upload results',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    uploaded: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          index: { type: 'integer' },
+                          fileName: { type: 'string' }
+                        }
+                      }
+                    },
+                    failed: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          index: { type: 'integer' },
+                          fileName: { type: 'string' },
+                          error: { type: 'string' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          400: { description: 'Validation error' }
+        }
+      }
+    },
     '/audio-file': {
       delete: {
         tags: ['files'],
