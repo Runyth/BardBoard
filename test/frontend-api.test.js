@@ -57,6 +57,13 @@ describe('soundboard frontend API', () => {
     assertJsonPost(harness.calls[0], '/api/switch-channel', { channelId: 'channel-3' });
   });
 
+  test('leaving the voice channel calls the bot endpoint', async () => {
+    const harness = createFetchHarness();
+    const api = createSoundboardApi(harness);
+    await api.leaveChannel('channel-5');
+    assertJsonPost(harness.calls[0], '/api/leave-channel', { channelId: 'channel-5' });
+  });
+
   test('playlist reordering sends the complete ordered queue', async () => {
     const harness = createFetchHarness();
     const api = createSoundboardApi(harness);

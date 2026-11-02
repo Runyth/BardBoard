@@ -45,6 +45,7 @@ export function createSoundboardApi({
     playTrack: (fileName, channelId) => post('/api/play-audio', { fileName, channelId }),
     queueTrack: (fileName, channelId) => post('/api/playlist/add', { fileName, channelId }),
     switchChannel: channelId => post('/api/switch-channel', { channelId }),
+    leaveChannel: channelId => post('/api/leave-channel', { channelId }),
     setPlaylist: (queue, channelId) => post('/api/playlist/set', { channelId, queue })
   };
 }

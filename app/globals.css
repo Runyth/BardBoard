@@ -146,6 +146,49 @@ a:hover { color: var(--gold-light); text-decoration: underline; }
     color: var(--text-muted);
 }
 
+.channel-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.channel-row .channel-trigger {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+
+.channel-leave {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--border-glass);
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 10px;
+    font-size: 0.82rem;
+    font-family: var(--font-raleway), sans-serif;
+    cursor: pointer;
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition), color var(--transition);
+}
+
+.channel-leave:hover:not(:disabled) {
+    border-color: rgba(212,168,67,0.45);
+    background: var(--bg-card-hover);
+    color: var(--gold-light);
+}
+
+.channel-leave:focus-visible {
+    outline: none;
+    border-color: rgba(212,168,67,0.65);
+    box-shadow: 0 0 0 2px rgba(212,168,67,0.2);
+}
+
+.channel-leave:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .channel-trigger {
     width: 100%;
     min-height: 38px;

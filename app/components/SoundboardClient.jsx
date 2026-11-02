@@ -395,6 +395,25 @@ export default function SoundboardClient() {
     setPlaylistDropActive(false);
   }, []);
 
+  const handleChannelLeave = async () => {
+    if (!channelId) return;
+    try {
+      const res = await api.leaveChannel(channelId);
+      if (!res.ok && res.status !== 404) {
+        const data = await parseJsonResponse(res);
+        throw new Error(data.error || 'Failed to leave channel');
+      }
+      setSelectedChannelId('');
+      setPlaylist([]);
+      const emptyNowPlaying = { song: null, elapsed: 0, duration: 0, paused: false, playing: false };
+      npRef.current = emptyNowPlaying;
+      setNp(emptyNowPlaying);
+      setPaused(false);
+    } catch (err) {
+      setStatus({ open: true, title: 'Error', message: err?.message || 'Failed to leave channel.' });
+    }
+  };
+
   const handleChannelChange = async nextChannelId => {
     setSelectedChannelId(nextChannelId);
     if (!nextChannelId) return;
@@ -736,6 +755,7 @@ export default function SoundboardClient() {
         channelId={channelId}
         channels={channels}
         onChannelChange={handleChannelChange}
+        onLeaveChannel={handleChannelLeave}
         onVolumeChange={setVolumeLocal}
         onVolumeCommit={commitVolume}
         onToggleMute={toggleMute}

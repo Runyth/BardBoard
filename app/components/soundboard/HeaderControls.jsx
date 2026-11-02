@@ -25,6 +25,7 @@ export default function HeaderControls({
   channelId,
   channels,
   onChannelChange,
+  onLeaveChannel,
   onVolumeChange,
   onVolumeCommit,
   onToggleMute,
@@ -143,23 +144,35 @@ export default function HeaderControls({
         </div>
         <div className="channel-group" ref={channelPickerRef}>
           <label className="channel-label" htmlFor="channelSelect">Channel</label>
-          <button
-            id="channelSelect"
-            type="button"
-            className={`channel-trigger${channelOpen ? ' open' : ''}`}
-            aria-haspopup="listbox"
-            aria-expanded={channelOpen}
-            aria-label="Select voice channel"
-            onClick={togglePicker}
-            onKeyDown={onTriggerKeyDown}
-          >
-            <span className="channel-trigger-text">
-              {selectedChannel ? selectedChannel.channelName : (channels.length ? 'Select a channel' : 'No channels available')}
-            </span>
-            <svg className="channel-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
+          <div className="channel-row">
+            <button
+              id="channelSelect"
+              type="button"
+              className={`channel-trigger${channelOpen ? ' open' : ''}`}
+              aria-haspopup="listbox"
+              aria-expanded={channelOpen}
+              aria-label="Select voice channel"
+              onClick={togglePicker}
+              onKeyDown={onTriggerKeyDown}
+            >
+              <span className="channel-trigger-text">
+                {selectedChannel ? selectedChannel.channelName : (channels.length ? 'Select a channel' : 'No channels available')}
+              </span>
+              <svg className="channel-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="channel-leave"
+              disabled={!channelId}
+              onClick={() => { if (channelId && typeof onLeaveChannel === 'function') void onLeaveChannel(); }}
+              aria-label="Leave voice channel"
+              title="Leave voice channel"
+            >
+              Leave
+            </button>
+          </div>
           {channelOpen && (
             <div className="channel-menu" role="listbox" tabIndex={0} onKeyDown={onMenuKeyDown} aria-label="Voice channel options">
               {Object.entries(channelsByGuild).map(([guildId, group]) => (
