@@ -20,6 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 function writeFileAtomically(filePath, contents, fsImpl = fs) {
+  fsImpl.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = path.join(
     path.dirname(filePath),
     `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`

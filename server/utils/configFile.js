@@ -44,8 +44,12 @@ function findDefaultConfigPath(cwd = process.cwd()) {
 }
 
 function getConfigFilePath(options = {}) {
-  if (options.explicitOnly) return getExplicitConfigPath();
-  return getExplicitConfigPath() || findDefaultConfigPath(options.cwd);
+  const explicitPath = getExplicitConfigPath();
+  if (explicitPath) return explicitPath;
+  if (options.explicitOnly || Object.prototype.hasOwnProperty.call(process.env, 'BARDBOARD_CONFIG_PATH')) {
+    return '';
+  }
+  return findDefaultConfigPath(options.cwd);
 }
 
 function detectConfigFormat(filePath) {
