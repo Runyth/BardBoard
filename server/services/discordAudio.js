@@ -16,6 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const {
   joinVoiceChannel,
@@ -36,6 +37,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
   const createAudioResourceImpl = dependencies.createAudioResource || createAudioResource;
   const spawnImpl = dependencies.spawn || spawn;
   const resolveAudioPathImpl = dependencies.resolveAudioPath || resolveAudioPath;
+  const fileExistsImpl = dependencies.fileExists || fs.existsSync;
   const parseAudioMetadata = dependencies.parseAudioMetadata || musicmetadata.parseFile;
   const sodiumReady = dependencies.sodiumReady || sodium.ready;
   const activeAudioPlayers = new Map();
@@ -265,7 +267,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
 
     const noisePath = resolveAudioPathImpl(noiseFile);
     const mainPath = resolveAudioPathImpl(currentFile);
-    if (!noisePath || !mainPath) return false;
+    if (!noisePath || !mainPath || !fileExistsImpl(noisePath) || !fileExistsImpl(mainPath)) return false;
 
     const offsetSecs = getElapsedSeconds(guildId);
     const noiseVolume = getNoiseVolume();
@@ -280,6 +282,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
       'pipe:1'
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    if (ffmpeg.stderr && typeof ffmpeg.stderr.resume === 'function') ffmpeg.stderr.resume();
     ffmpeg.on('error', (err) => {
       console.error('FFmpeg overlay error:', err);
     });
@@ -366,7 +369,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
     if (!channel) return false;
     if (!hasAllowedExt(fileName)) return false;
     const safePath = resolveAudioPathImpl(fileName);
-    if (!safePath) return false;
+    if (!safePath || !fileExistsImpl(safePath)) return false;
 
     try {
       const isNoise = isNoiseTrack(fileName);
@@ -530,11 +533,16 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
       connection = null;
     }
 
-    connection = joinVoiceChannelImpl({
-      channelId: channel.id,
-      guildId,
-      adapterCreator: channel.guild.voiceAdapterCreator
-    });
+    try {
+      connection = joinVoiceChannelImpl({
+        channelId: channel.id,
+        guildId,
+        adapterCreator: channel.guild.voiceAdapterCreator
+      });
+    } catch (error) {
+      console.error('Error switching connection channel:', error);
+      return false;
+    }
     activeConnections.set(guildId, connection);
 
     connection.on('error', (error) => {
@@ -567,6 +575,8 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
       }
     }
     activeConnections.delete(guildId);
+    queueByGuild.set(guildId, []);
+    repeatEnabled.delete(guildId);
     return true;
   }
 
@@ -621,7 +631,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
 
     const volume = currentVolume.get(guildId) ?? 0.5;
     const filePath = resolveAudioPathImpl(fileName);
-    if (!filePath) return false;
+    if (!filePath || !fileExistsImpl(filePath)) return false;
 
     const ffmpeg = spawnImpl('ffmpeg', [
       '-ss', String(offsetSecs),
@@ -632,6 +642,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
       'pipe:1'
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    if (ffmpeg.stderr && typeof ffmpeg.stderr.resume === 'function') ffmpeg.stderr.resume();
     ffmpeg.on('error', (err) => {
       console.error('FFmpeg spawn error:', err);
     });

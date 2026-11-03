@@ -86,6 +86,7 @@ function createHarness(options = {}) {
   const dependencies = {
     sodiumReady: Promise.resolve(),
     resolveAudioPath: fileName => fileName === 'missing.mp3' ? null : `virtual/audio/${fileName}`,
+    fileExists: options.fileExists || (() => true),
     parseAudioMetadata: async () => ({ format: { duration: 10 } }),
     joinVoiceChannel: config => {
       if (options.failConnection) throw new Error('connection failed');
@@ -146,6 +147,12 @@ describe('Discord audio service', () => {
       paused: false,
       playing: false
     });
+  });
+
+  test('rejects audio files that do not exist on disk', async () => {
+    const { service } = createHarness({ fileExists: () => false });
+    assert.equal(await service.playAudioInDiscord('missing.mp3', CHANNEL_ONE), false);
+    assert.equal(await service.playAudioInDiscord('song.mp3', CHANNEL_ONE), false);
   });
 
   test('queues are isolated by guild and copied when replaced', () => {
@@ -209,14 +216,18 @@ describe('Discord audio service', () => {
     assert.equal(connections.length, 2);
   });
 
-  test('leaving channel stops audio and destroys connection', async () => {
+  test('leaving channel stops audio, clears queue state, and destroys connection', async () => {
     const { service, players, connections } = createHarness();
+    service.addToQueue(CHANNEL_ONE, 'queued.mp3');
+    service.toggleRepeat(CHANNEL_ONE);
     await service.playAudioInDiscord('song.mp3', CHANNEL_ONE);
 
     assert.equal(service.leaveVoiceChannel(CHANNEL_ONE), true);
     assert.equal(players[0].stopCalls >= 1, true);
     assert.equal(connections[0].destroyed, true);
     assert.equal(service.isPlaying(CHANNEL_ONE), false);
+    assert.deepEqual(service.getQueue(CHANNEL_ONE), []);
+    assert.deepEqual(service.getRepeatStatus(CHANNEL_ONE), { repeatEnabled: false });
     assert.equal(service.leaveVoiceChannel(UNKNOWN_CHANNEL), false);
   });
 
