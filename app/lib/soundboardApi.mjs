@@ -46,6 +46,9 @@ export function createSoundboardApi({
     queueTrack: (fileName, channelId) => post('/api/playlist/add', { fileName, channelId }),
     switchChannel: channelId => post('/api/switch-channel', { channelId }),
     leaveChannel: channelId => post('/api/leave-channel', { channelId }),
-    setPlaylist: (queue, channelId) => post('/api/playlist/set', { channelId, queue })
+    setPlaylist: (queue, channelId) => post('/api/playlist/set', { channelId, queue }),
+    getAudioLibrary: () => fetchApi('/api/audio-library', { cache: 'no-store' }),
+    addLibraryTracks: (paths, categories) => post('/api/audio-library/add', { paths, categories }),
+    resolveUploadDuplicates: resolutions => post('/api/upload-audio-resolve', { resolutions })
   };
 }

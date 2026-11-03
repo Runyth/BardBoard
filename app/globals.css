@@ -1277,6 +1277,245 @@ a:hover { color: var(--gold-light); text-decoration: underline; }
     box-shadow: 0 0 14px rgba(220,50,50,0.3);
 }
 
+.form-error {
+    margin: 0 0 12px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(240,80,80,0.35);
+    background: rgba(200,40,40,0.14);
+    color: #fca5a5;
+    font-size: 0.85rem;
+    text-align: left;
+}
+
+.library-panel {
+    width: min(760px, 94vw);
+    max-height: min(86vh, 900px);
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+}
+
+.library-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.library-sub {
+    margin: 0 0 12px;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+
+.library-loading {
+    padding: 36px 16px;
+    color: var(--gold-light);
+    text-align: center;
+}
+
+.library-form {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.library-toolbar {
+    display: flex;
+    gap: 10px;
+}
+
+.library-toolbar .field-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.library-layout {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(180px, 0.8fr);
+    gap: 12px;
+}
+
+.library-column {
+    min-height: 0;
+    padding: 10px;
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    background: rgba(0,0,0,0.16);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.library-column h3 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--gold-light);
+    font-family: var(--font-cinzel), serif;
+    font-size: 0.95rem;
+}
+
+.library-column h3 span {
+    color: var(--text-muted);
+    font-family: var(--font-raleway), sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.library-list {
+    max-height: min(48vh, 420px);
+    overflow-y: auto;
+    display: grid;
+    gap: 6px;
+    padding-right: 2px;
+}
+
+.library-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-glass);
+    border-radius: 10px;
+    background: rgba(0,0,0,0.18);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition);
+}
+
+.library-item:hover {
+    background: var(--bg-card-hover);
+}
+
+.library-item.selected {
+    border-color: rgba(212,168,67,0.55);
+    background: rgba(212,168,67,0.12);
+}
+
+.library-item input {
+    margin-top: 2px;
+    accent-color: var(--gold);
+    flex-shrink: 0;
+}
+
+.library-item-copy {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.library-item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.86rem;
+}
+
+.library-item-meta {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.library-empty {
+    margin: 0;
+    padding: 12px;
+    border: 1px dashed rgba(255,255,255,0.15);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    font-style: italic;
+}
+
+.duplicate-panel {
+    width: min(620px, 94vw);
+    max-height: min(86vh, 900px);
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+}
+
+.duplicate-panel h2 {
+    text-align: left;
+}
+
+.duplicate-list {
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.duplicate-item {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    background: rgba(0,0,0,0.18);
+}
+
+.duplicate-item legend {
+    padding: 0 4px;
+    color: var(--gold-light);
+    font-weight: 700;
+}
+
+.duplicate-item p {
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.duplicate-item code {
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.duplicate-choice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.88rem;
+}
+
+.duplicate-choice input {
+    accent-color: var(--gold);
+}
+
+@media (max-width: 720px) {
+    .search-bar {
+        flex-wrap: wrap;
+    }
+
+    .search-field {
+        flex-basis: 100%;
+    }
+
+    .library-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .library-list {
+        max-height: 30vh;
+    }
+
+    .library-panel,
+    .duplicate-panel {
+        max-height: 90vh;
+    }
+}
+
 /* =============================================
    TRACK GRID
    ============================================= */

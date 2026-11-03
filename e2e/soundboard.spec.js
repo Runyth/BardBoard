@@ -53,7 +53,18 @@ async function mockSoundboard(page, options = {}) {
       categories: Object.fromEntries(Object.entries(options.audio?.categories || {
         Combat: ['Combat/roar.ogg']
       }).map(([name, files]) => [name, [...files]]))
-    }
+    },
+    libraryFiles: options.libraryFiles || [
+      {
+        path: 'theme.flac',
+        name: 'theme.flac',
+        extension: '.flac',
+        size: 128,
+        modifiedAt: Date.now(),
+        hash: 'a'.repeat(64),
+        uploadSupported: false
+      }
+    ]
   };
 
   const removeAudioFile = file => {
@@ -206,16 +217,43 @@ async function mockSoundboard(page, options = {}) {
       addAudioFile(fileName, url.searchParams.get('category') || '');
       return route.fulfill({ status: 201, json: { fileName } });
     }
+    if (apiPath === '/api/audio-library') {
+      return route.fulfill({ json: { files: state.libraryFiles } });
+    }
+    if (apiPath === '/api/audio-library/add') {
+      const added = [];
+      for (const source of body.paths || []) {
+        for (const category of body.categories || []) {
+          const path = `${category}/${source.split('/').pop()}`;
+          addAudioFile(path, category);
+          added.push({ source, category, path });
+        }
+      }
+      return route.fulfill({ json: { ok: true, added, skipped: [] } });
+    }
     if (apiPath === '/api/upload-audio-batch') {
       const multipart = request.postDataBuffer()?.toString('latin1') || '';
       const fileNames = [...multipart.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
       if (!fileNames.length) return route.fulfill({ status: 400, json: { error: 'No files uploaded' } });
       const category = url.searchParams.get('category') || '';
       const uploaded = [];
+      const duplicates = [];
       const failed = [];
       fileNames.forEach((fileName, index) => {
         if ((options.uploadFailureNames || []).includes(fileName)) {
           failed.push({ index, fileName, error: `Upload rejected for ${fileName}` });
+          return;
+        }
+        if ((options.duplicateUploadNames || []).includes(fileName)) {
+          duplicates.push({
+            token: `staged-${index}.upload`,
+            fileName,
+            category,
+            existingPath: state.audio.root[0] || 'intro.mp3',
+            size: 128,
+            hash: 'a'.repeat(64),
+            index
+          });
           return;
         }
         addAudioFile(fileName, category);
@@ -226,7 +264,32 @@ async function mockSoundboard(page, options = {}) {
         state.refreshFailureAfterUpload = false;
         state.failNextAudioFiles = true;
       }
-      return route.fulfill({ json: { ok: failed.length === 0, uploaded, failed } });
+      return route.fulfill({
+        json: {
+          ok: failed.length === 0 && duplicates.length === 0,
+          uploaded,
+          duplicates,
+          failed
+        }
+      });
+    }
+    if (apiPath === '/api/upload-audio-resolve') {
+      const replaced = [];
+      const discarded = [];
+      for (const resolution of body.resolutions || []) {
+        if (resolution.action === 'discard') {
+          discarded.push({ token: resolution.token });
+          continue;
+        }
+        removeAudioFile(resolution.existingPath);
+        addAudioFile(resolution.fileName, resolution.category || '');
+        replaced.push({
+          token: resolution.token,
+          existingPath: resolution.existingPath,
+          path: resolution.category ? `${resolution.category}/${resolution.fileName}` : resolution.fileName
+        });
+      }
+      return route.fulfill({ json: { ok: true, replaced, discarded, failed: [] } });
     }
     if (apiPath === '/api/users' && method === 'GET') {
       return route.fulfill({ json: { users: state.users, roles: state.roles } });
@@ -462,6 +525,70 @@ test('a partial multi-file upload keeps successful files and allows retrying the
   await expect(page.locator('.upload-file-name')).toHaveText(['broken.ogg']);
   expect(state.audio.root).toContain('success.mp3');
   expect(state.audio.root).not.toContain('broken.ogg');
+});
+
+test('a duplicate upload can replace the existing track from the review modal', async ({ page }) => {
+  const state = await mockSoundboard(page, { duplicateUploadNames: ['replacement.mp3'] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add Song' }).click();
+
+  await page.locator('#uploadFile').setInputFiles({
+    name: 'replacement.mp3',
+    mimeType: 'audio/mpeg',
+    buffer: Buffer.from('duplicate content')
+  });
+  await page.getByRole('button', { name: 'Upload' }).click();
+
+  await expect(page.locator('#duplicateModal')).toHaveClass(/open/);
+  await expect(page.locator('#duplicateModal')).toContainText('intro.mp3');
+  await expect(page.getByLabel('Discard new upload')).toBeChecked();
+  await page.getByLabel('Replace existing track').check();
+  await page.getByRole('button', { name: 'Apply choices' }).click();
+
+  await expect(page.locator('#statusTitle')).toHaveText('Duplicate review complete');
+  await expect(page.locator('#statusMessage')).toContainText('1 replaced, 0 discarded');
+  await expect(page.getByRole('button', { name: 'Play replacement' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play intro' })).toHaveCount(0);
+  expect(state.audio.root).toContain('replacement.mp3');
+  expect(state.audio.root).not.toContain('intro.mp3');
+});
+
+test('duplicate uploads can all be discarded without changing the soundboard', async ({ page }) => {
+  const state = await mockSoundboard(page, { duplicateUploadNames: ['replacement.mp3'] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add Song' }).click();
+
+  await page.locator('#uploadFile').setInputFiles({
+    name: 'replacement.mp3',
+    mimeType: 'audio/mpeg',
+    buffer: Buffer.from('duplicate content')
+  });
+  await page.getByRole('button', { name: 'Upload' }).click();
+  await page.getByRole('button', { name: 'Discard all new' }).click();
+
+  await expect(page.locator('#statusTitle')).toHaveText('Duplicate review complete');
+  await expect(page.locator('#statusMessage')).toContainText('0 replaced, 1 discarded');
+  await expect(page.getByRole('button', { name: 'Play intro' })).toBeVisible();
+  expect(state.audio.root).toContain('intro.mp3');
+  expect(state.audio.root).not.toContain('replacement.mp3');
+});
+
+test('browsing the audio library adds linked tracks to a category', async ({ page }) => {
+  const state = await mockSoundboard(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Browse Library' }).click();
+
+  await expect(page.locator('#libraryModal')).toHaveClass(/open/);
+  await expect(page.locator('#libraryModal')).toContainText('theme.flac');
+  await expect(page.locator('#libraryModal')).toContainText('Library format');
+  await page.locator('.library-item').filter({ hasText: 'theme.flac' }).getByRole('checkbox').check();
+  await page.locator('.library-item').filter({ hasText: 'Combat' }).getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Add references' }).click();
+
+  await expect(page.locator('#statusTitle')).toHaveText('Library updated');
+  await expect(page.locator('#statusMessage')).toContainText('Added 1 track reference');
+  await expect(page.getByRole('button', { name: 'Play theme' })).toBeVisible();
+  expect(state.audio.categories.Combat).toContain('Combat/theme.flac');
 });
 
 test('a large multi-file upload is sent as one batch request', async ({ page }) => {

@@ -15,7 +15,7 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-export default function SearchBar({ search, onSearchChange, onOpenUpload, onOpenCategory }) {
+export default function SearchBar({ search, onSearchChange, onOpenUpload, onOpenCategory, onOpenLibrary }) {
   return (
     <div className="search-bar">
       <div className="search-field">
@@ -26,6 +26,7 @@ export default function SearchBar({ search, onSearchChange, onOpenUpload, onOpen
         <input id="trackSearch" type="search" placeholder="Search tracks or categories..." value={search} onChange={e => onSearchChange(e.target.value)} />
       </div>
       <button id="openCategory" className="ctrl-btn ctrl-upload" onClick={onOpenCategory}>Add Category</button>
+      <button id="openLibrary" className="ctrl-btn ctrl-upload" onClick={onOpenLibrary}>Browse Library</button>
       <button id="openUpload" className="ctrl-btn ctrl-upload" onClick={onOpenUpload}>Add Song</button>
     </div>
   );

@@ -67,6 +67,15 @@ export default function SoundboardClient() {
   const [uploadDropActive, setUploadDropActive] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [duplicatePrompt, setDuplicatePrompt] = useState({ open: false, items: [], busy: false, error: '', uploadedCount: 0, failedNames: [] });
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryFiles, setLibraryFiles] = useState([]);
+  const [librarySelected, setLibrarySelected] = useState(() => new Set());
+  const [libraryCategories, setLibraryCategories] = useState(() => new Set());
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [libraryError, setLibraryError] = useState('');
+  const [librarySubmitting, setLibrarySubmitting] = useState(false);
   const [status, setStatus] = useState({ open: false, title: 'Upload complete', message: 'Your songs are ready.' });
   const [confirm, setConfirm] = useState({ open: false, title: 'Confirm delete', text: '', action: null });
   const [renameModal, setRenameModal] = useState({ open: false, type: 'file', source: '', value: '' });
@@ -277,6 +286,13 @@ export default function SoundboardClient() {
     { value: '__new__', label: 'New category...' },
     ...categories.map(c => ({ value: c, label: c }))
   ]), [categories]);
+  const filteredLibraryFiles = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase();
+    if (!query) return libraryFiles;
+    return libraryFiles.filter(file => file.path.toLowerCase().includes(query));
+  }, [libraryFiles, librarySearch]);
+  const allLibraryFilesSelected = libraryFiles.length > 0
+    && librarySelected.size === libraryFiles.length;
 
   const nowTrack = np.song ? stripExt(np.song) : '';
 
@@ -705,9 +721,30 @@ export default function SoundboardClient() {
         }
       });
       const failed = Array.isArray(result.failed) ? result.failed : [];
+      const duplicates = Array.isArray(result.duplicates) ? result.duplicates : [];
       const uploadedCount = Array.isArray(result.uploaded)
         ? result.uploaded.length
-        : Math.max(0, filesToUpload.length - failed.length);
+        : Math.max(0, filesToUpload.length - failed.length - duplicates.length);
+      const failedNames = failed.map(item => item.fileName).filter(Boolean);
+
+      if (duplicates.length) {
+        const failedIndexes = new Set(
+          failed.map(item => item.index).filter(index => Number.isInteger(index))
+        );
+        setUploadFiles(filesToUpload.filter((_, index) => failedIndexes.has(index)));
+        setUploadProgress(100);
+        setUploadOpen(false);
+        await refreshFiles();
+        setDuplicatePrompt({
+          open: true,
+          items: duplicates.map(item => ({ ...item, choice: 'discard' })),
+          busy: false,
+          error: '',
+          uploadedCount,
+          failedNames
+        });
+        return;
+      }
 
       if (failed.length) {
         const failedIndexes = new Set(
@@ -716,7 +753,6 @@ export default function SoundboardClient() {
         setUploadFiles(filesToUpload.filter((_, index) => failedIndexes.has(index)));
         setUploadProgress(100);
         await refreshFiles();
-        const failedNames = failed.map(item => item.fileName).filter(Boolean);
         setStatus({
           open: true,
           title: uploadedCount > 0 ? 'Upload partially complete' : 'Upload failed',
@@ -746,6 +782,119 @@ export default function SoundboardClient() {
     }
   };
 
+  const resolveDuplicateUploads = async discardAll => {
+    const resolutions = duplicatePrompt.items.map(item => ({
+      token: item.token,
+      action: discardAll ? 'discard' : item.choice,
+      fileName: item.fileName,
+      category: item.category,
+      existingPath: item.existingPath
+    }));
+    setDuplicatePrompt(prev => ({ ...prev, busy: true, error: '' }));
+    try {
+      const res = await api.resolveUploadDuplicates(resolutions);
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || 'Could not resolve duplicate uploads');
+      await refreshFiles();
+      const failed = Array.isArray(data.failed) ? data.failed : [];
+      if (failed.length) {
+        const failedTokens = new Set(failed.map(item => item.token));
+        setDuplicatePrompt(prev => ({
+          ...prev,
+          busy: false,
+          error: failed[0]?.error || 'Some uploads could not be resolved.',
+          items: prev.items.filter(item => failedTokens.has(item.token))
+        }));
+        return;
+      }
+
+      const replaced = Array.isArray(data.replaced) ? data.replaced.length : 0;
+      const discarded = Array.isArray(data.discarded) ? data.discarded.length : 0;
+      const failedSuffix = duplicatePrompt.failedNames.length
+        ? ` Failed: ${duplicatePrompt.failedNames.join(', ')}.`
+        : '';
+      setDuplicatePrompt({ open: false, items: [], busy: false, error: '', uploadedCount: 0, failedNames: [] });
+      setStatus({
+        open: true,
+        title: 'Duplicate review complete',
+        message: `${duplicatePrompt.uploadedCount} uploaded. ${replaced} replaced, ${discarded} discarded.${failedSuffix}`
+      });
+    } catch (err) {
+      setDuplicatePrompt(prev => ({ ...prev, busy: false, error: err?.message || 'Could not resolve duplicate uploads.' }));
+    }
+  };
+
+  const openLibrary = async () => {
+    setLibraryOpen(true);
+    setLibraryLoading(true);
+    setLibraryError('');
+    setLibrarySearch('');
+    setLibrarySelected(new Set());
+    setLibraryCategories(new Set());
+    try {
+      const res = await api.getAudioLibrary();
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || 'Could not scan audio library');
+      setLibraryFiles(Array.isArray(data.files) ? data.files : []);
+    } catch (err) {
+      setLibraryFiles([]);
+      setLibraryError(err?.message || 'Could not scan audio library.');
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  const toggleLibraryFile = path => {
+    setLibrarySelected(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const toggleLibraryCategory = name => {
+    setLibraryCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const submitLibraryAdd = async e => {
+    e.preventDefault();
+    if (!librarySelected.size) {
+      setLibraryError('Select at least one track.');
+      return;
+    }
+    if (!libraryCategories.size) {
+      setLibraryError('Select at least one category.');
+      return;
+    }
+
+    setLibrarySubmitting(true);
+    setLibraryError('');
+    try {
+      const res = await api.addLibraryTracks([...librarySelected], [...libraryCategories]);
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || 'Could not add library tracks');
+      await refreshFiles();
+      setLibraryOpen(false);
+      const added = Array.isArray(data.added) ? data.added.length : 0;
+      const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      setStatus({
+        open: true,
+        title: 'Library updated',
+        message: `Added ${added} track reference${added === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} already present or conflicting reference${skipped === 1 ? '' : 's'}.` : ''}`
+      });
+    } catch (err) {
+      setLibraryError(err?.message || 'Could not add library tracks.');
+    } finally {
+      setLibrarySubmitting(false);
+    }
+  };
+
   return (
     <>
       <div id="appLoader" className={`app-loader${ready ? ' loaded' : ''}`}><div className="loader-content"><Image className="loader-ouroboros" src="/ouroboros.svg" alt="Loading" width={96} height={96} priority /><p id="loaderMessage">Preparing the Tavern...</p></div></div>
@@ -772,7 +921,7 @@ export default function SoundboardClient() {
       />
 
       <main className="soundboard">
-        <SearchBar search={search} onSearchChange={setSearch} onOpenUpload={() => setUploadOpen(true)} onOpenCategory={() => setCategoryOpen(true)} />
+        <SearchBar search={search} onSearchChange={setSearch} onOpenUpload={() => setUploadOpen(true)} onOpenCategory={() => setCategoryOpen(true)} onOpenLibrary={() => void openLibrary()} />
 
         <div className="soundboard-layout">
           <section className="soundboard-main"><div id="audioButtons">
@@ -870,6 +1019,96 @@ export default function SoundboardClient() {
       </div>
 
       <div id="uploadModal" className={`upload-modal${uploadOpen ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) setUploadOpen(false); }}><div className="upload-panel"><div className="upload-head"><h2 id="uploadTitle">Add Songs</h2><button id="closeUpload" className="upload-close" type="button" onClick={() => setUploadOpen(false)}>&times;</button></div><div id="uploadLoading" className={`upload-loading${uploadLoading ? ' show' : ''}`}><Image className="upload-ouroboros" src="/ouroboros.svg" alt="Uploading" width={90} height={90} /><p>Uploading... {uploadProgress}%</p><div className="upload-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={uploadProgress}><div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} /></div></div><form id="uploadForm" className="upload-form" onSubmit={e => void submitUpload(e)}><input id="uploadFile" type="file" accept=".mp3,.wav,.ogg,.m4a" multiple hidden onChange={e => { addUploadFiles(e.target.files); e.target.value = ''; }} /><label id="uploadDrop" className={`upload-drop${uploadDropActive ? ' is-active' : ''}`} htmlFor="uploadFile" onDragEnter={e => { e.preventDefault(); setUploadDropActive(true); }} onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setUploadDropActive(true); }} onDragLeave={e => { const nextTarget = e.relatedTarget; if (!e.currentTarget.contains(nextTarget)) setUploadDropActive(false); }} onDrop={handleUploadDrop}><span className="drop-title">Drag your song(s) here</span><span className="drop-sub">or <span className="drop-link">browse</span> your files</span><span id="uploadFileName" className="drop-file">{uploadFiles.length ? `${uploadFiles.length} file(s) selected` : 'No files selected'}</span></label><div id="uploadFileList" className="upload-file-list">{uploadFiles.map((f, i) => <div key={`${f.name}-${i}`} className="upload-file-item"><span className="upload-file-index">{i + 1}.</span><span className="upload-file-name">{f.name}</span><button className="upload-file-remove" type="button" onClick={() => setUploadFiles(prev => prev.filter((_, x) => x !== i))}><TrashIcon /></button></div>)}</div><div className="upload-fields"><label className="field-label" htmlFor="uploadCategorySelect">Category</label><div className="field-picker" ref={uploadCategoryPickerRef}><button id="uploadCategorySelect" className={`field-select field-select-trigger${uploadCategoryOpen ? ' open' : ''}`} type="button" aria-haspopup="listbox" aria-expanded={uploadCategoryOpen} onClick={() => setUploadCategoryOpen(v => !v)} onKeyDown={onUploadCategoryKeyDown}><span className="field-select-text">{uploadCategoryOptions.find(opt => opt.value === uploadCategory)?.label || 'Root (no category)'}</span><svg className="field-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg></button>{uploadCategoryOpen && (<div className={`field-select-menu${uploadCategoryMenuUp ? ' up' : ''}`} role="listbox" tabIndex={0} onKeyDown={onUploadCategoryKeyDown}>{uploadCategoryOptions.map(opt => { const isActive = uploadCategoryActive === opt.value; const isSelected = uploadCategory === opt.value; return <button key={opt.value || '__root'} type="button" role="option" aria-selected={isSelected} className={`field-select-option${isActive ? ' active' : ''}${isSelected ? ' selected' : ''}`} onMouseEnter={() => setUploadCategoryActive(opt.value)} onClick={() => { setUploadCategory(opt.value); setUploadCategoryActive(opt.value); setUploadCategoryOpen(false); }}>{opt.label}</button>; })}</div>)}</div><div id="newCategoryFields" className={`new-category-fields${uploadCategory === '__new__' ? '' : ' is-hidden'}`}><label className="field-label" htmlFor="uploadCategoryNew">New category name</label><input id="uploadCategoryNew" className="field-input" placeholder="New category name" value={uploadCategoryNew} onChange={e => setUploadCategoryNew(e.target.value)} /></div></div><div className="upload-actions"><button type="submit" className="ctrl-btn ctrl-upload">Upload</button></div></form></div></div>
+
+      <div id="libraryModal" className={`confirm-modal${libraryOpen ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) setLibraryOpen(false); }}>
+        <div className="confirm-panel library-panel">
+          <div className="library-head">
+            <div>
+              <h2>Browse audio library</h2>
+              <p className="library-sub">Files found in BardBoard folders, including formats uploads do not accept. References are linked without copying or deleting audio.</p>
+            </div>
+            <button className="upload-close" type="button" aria-label="Close audio library" onClick={() => setLibraryOpen(false)}>&times;</button>
+          </div>
+          {libraryLoading ? (
+            <div className="library-loading" role="status">Scanning audio library...</div>
+          ) : (
+            <form className="library-form" onSubmit={e => void submitLibraryAdd(e)}>
+              {libraryError && <p className="form-error" role="alert">{libraryError}</p>}
+              <div className="library-toolbar">
+                <input className="field-input" type="search" placeholder="Filter library files..." aria-label="Filter library files" value={librarySearch} onChange={e => setLibrarySearch(e.target.value)} />
+                <button className="ctrl-btn" type="button" onClick={() => setLibrarySelected(allLibraryFilesSelected ? new Set() : new Set(libraryFiles.map(file => file.path)))}>
+                  {allLibraryFilesSelected ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+              <div className="library-layout">
+                <section className="library-column" aria-labelledby="libraryTracksTitle">
+                  <h3 id="libraryTracksTitle">Tracks <span>{librarySelected.size} selected</span></h3>
+                  <div className="library-list">
+                    {filteredLibraryFiles.length ? filteredLibraryFiles.map(file => (
+                      <label key={file.path} className={`library-item${librarySelected.has(file.path) ? ' selected' : ''}`}>
+                        <input type="checkbox" checked={librarySelected.has(file.path)} onChange={() => toggleLibraryFile(file.path)} />
+                        <span className="library-item-copy">
+                          <span className="library-item-name">{file.path}</span>
+                          <span className="library-item-meta">{file.extension || 'audio'} · {file.uploadSupported ? 'Upload format' : 'Library format'}</span>
+                        </span>
+                      </label>
+                    )) : <p className="library-empty">No audio files match this filter.</p>}
+                  </div>
+                </section>
+                <section className="library-column library-categories" aria-labelledby="libraryCategoriesTitle">
+                  <h3 id="libraryCategoriesTitle">Categories <span>{libraryCategories.size} selected</span></h3>
+                  <div className="library-list">
+                    {categories.length ? categories.map(category => (
+                      <label key={category} className={`library-item${libraryCategories.has(category) ? ' selected' : ''}`}>
+                        <input type="checkbox" checked={libraryCategories.has(category)} onChange={() => toggleLibraryCategory(category)} />
+                        <span className="library-item-copy">
+                          <span className="library-item-name">{category}</span>
+                        </span>
+                      </label>
+                    )) : <p className="library-empty">Create a category first, then add tracks to it.</p>}
+                  </div>
+                </section>
+              </div>
+              <div className="confirm-actions">
+                <button className="ctrl-btn" type="button" onClick={() => setLibraryOpen(false)}>Cancel</button>
+                <button className="ctrl-btn ctrl-upload" type="submit" disabled={librarySubmitting || !librarySelected.size || !libraryCategories.size}>
+                  {librarySubmitting ? 'Adding...' : 'Add references'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+
+      <div id="duplicateModal" className={`confirm-modal${duplicatePrompt.open ? ' open' : ''}`}>
+        <div className="confirm-panel duplicate-panel">
+          <h2>Duplicate audio found</h2>
+          <p className="library-sub">These uploads match existing tracks by content. Choose whether to replace the existing track or discard the new upload.</p>
+          <div className="duplicate-list">
+            {duplicatePrompt.items.map(item => (
+              <fieldset key={item.token} className="duplicate-item">
+                <legend>{item.fileName}</legend>
+                <p>Existing track: <code>{item.existingPath}</code></p>
+                <label className="duplicate-choice">
+                  <input type="radio" name={`duplicate-${item.token}`} checked={item.choice === 'discard'} onChange={() => setDuplicatePrompt(prev => ({ ...prev, items: prev.items.map(entry => entry.token === item.token ? { ...entry, choice: 'discard' } : entry) }))} />
+                  Discard new upload
+                </label>
+                <label className="duplicate-choice">
+                  <input type="radio" name={`duplicate-${item.token}`} checked={item.choice === 'replace'} onChange={() => setDuplicatePrompt(prev => ({ ...prev, items: prev.items.map(entry => entry.token === item.token ? { ...entry, choice: 'replace' } : entry) }))} />
+                  Replace existing track
+                </label>
+              </fieldset>
+            ))}
+          </div>
+          {duplicatePrompt.error && <p className="form-error" role="alert">{duplicatePrompt.error}</p>}
+          <div className="confirm-actions">
+            <button className="ctrl-btn" type="button" disabled={duplicatePrompt.busy} onClick={() => void resolveDuplicateUploads(true)}>Discard all new</button>
+            <button className="ctrl-btn ctrl-upload" type="button" disabled={duplicatePrompt.busy} onClick={() => void resolveDuplicateUploads(false)}>
+              {duplicatePrompt.busy ? 'Resolving...' : 'Apply choices'}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div id="statusModal" className={`status-modal${status.open ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) setStatus(prev => ({ ...prev, open: false })); }}><div className="status-panel"><h2 id="statusTitle">{status.title}</h2><p id="statusMessage">{status.message}</p><div className="status-actions"><button id="statusOk" className="ctrl-btn ctrl-upload" type="button" onClick={() => setStatus(prev => ({ ...prev, open: false }))}>Ok</button></div></div></div>
       <div id="confirmModal" className={`confirm-modal${confirm.open ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) setConfirm(prev => ({ ...prev, open: false })); }}><div className="confirm-panel"><h2 id="confirmTitle">{confirm.title}</h2><p id="confirmMessage">{confirm.text}</p><div className="confirm-actions"><button id="confirmCancel" className="ctrl-btn" type="button" onClick={() => setConfirm(prev => ({ ...prev, open: false }))}>Cancel</button><button id="confirmOk" className="ctrl-btn confirm-danger" type="button" onClick={() => { const action = confirm.action; setConfirm(prev => ({ ...prev, open: false })); if (action) void action().catch(err => setStatus({ open: true, title: 'Error', message: err?.message || 'Operation failed.' })); }}>Delete</button></div></div></div>
