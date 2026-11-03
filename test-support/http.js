@@ -64,7 +64,9 @@ function createCookieClient(baseUrl) {
   return async (path, options = {}) => {
     const headers = { ...options.headers };
     if (cookie) headers.cookie = cookie;
-    const hasObjectBody = options.body !== undefined && typeof options.body !== 'string';
+    const hasObjectBody = options.body !== null
+      && typeof options.body === 'object'
+      && options.body.constructor === Object;
     if (hasObjectBody) headers['content-type'] = 'application/json';
 
     const response = await fetch(`${baseUrl}${path}`, {

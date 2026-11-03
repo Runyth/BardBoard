@@ -167,8 +167,9 @@ export default function SettingsPage() {
                       </span>
                       <input
                         className="field-input login-input"
-                        type="text"
+                        type={item.secret ? 'password' : 'text'}
                         value={values[item.key] ?? ''}
+                        placeholder={item.secret && item.configured ? 'Configured - leave blank to keep' : ''}
                         onChange={e => setValues(prev => ({ ...prev, [item.key]: e.target.value }))}
                       />
                     </label>

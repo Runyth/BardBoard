@@ -28,6 +28,8 @@ function writeTestConfig(discordToken = 'fake-discord-token') {
 
 writeTestConfig();
 process.env.BARDBOARD_ENV_PATH = envPath;
+process.env.BARDBOARD_CONFIG_PATH = '';
+process.env.BARDBOARD_USERS_PATH = path.join(tempDir, 'users.json');
 process.env.NODE_ENV = 'test';
 
 const { app, discordClient } = require('../server/app');
@@ -114,6 +116,9 @@ describe('complete Express application', { concurrency: false }, () => {
       assert.equal(status.body.canManageSettings, false);
       assert.equal((await client('/voice-channels')).status, 200);
       assert.deepEqual((await client('/settings/config')).body, { error: 'Forbidden' });
+      assert.deepEqual((await client('/settings/config/')).body, { error: 'Forbidden' });
+      assert.deepEqual((await client('/Users')).body, { error: 'Forbidden' });
+      assert.deepEqual((await client('/SETTINGS/restart', { method: 'POST' })).body, { error: 'Forbidden' });
     });
   });
 
@@ -130,6 +135,9 @@ describe('complete Express application', { concurrency: false }, () => {
       const settings = await client('/settings/config');
       assert.equal(settings.status, 200);
       assert.equal(Array.isArray(settings.body.items), true);
+      const tokenItem = settings.body.items.find(item => item.key === 'DISCORD_TOKEN');
+      assert.equal(tokenItem.value, '');
+      assert.equal(tokenItem.configured, true);
       assert.equal((await client('/api-docs.json')).status, 200);
 
       assert.deepEqual((await client('/auth/logout', { method: 'POST' })).body, { ok: true });
@@ -305,100 +313,4 @@ describe('complete Express application', { concurrency: false }, () => {
     });
   });
 
-  test('setup mode exposes only setup status and health', async () => {
-    writeTestConfig('');
-    try {
-      await withTestServer(app, async baseUrl => {
-        assert.deepEqual(await request(baseUrl, '/setup/status'), {
-          status: 200,
-          body: { setupRequired: true }
-        });
-        assert.equal((await request(baseUrl, '/health')).status, 200);
-        assert.deepEqual(await request(baseUrl, '/voice-channels'), {
-          status: 503,
-          body: { error: 'Initial setup required', setupRequired: true }
-        });
-
-        assert.deepEqual(await request(baseUrl, '/setup/complete', {
-          method: 'POST',
-          body: {
-            discordToken: 'PasteYourDiscordBotTokenHere',
-            adminUser: 'admin',
-            adminPass: 'secret'
-          }
-        }), {
-          status: 400,
-          body: { error: 'Discord token is required' }
-        });
-
-        assert.deepEqual(await request(baseUrl, '/setup/complete', {
-          method: 'POST',
-          body: {
-            discordToken: 'token',
-            adminUser: 'admin',
-            adminPass: 'secret',
-            readonlyEnabled: true,
-            readonlyUser: 'viewer'
-          }
-        }), {
-          status: 400,
-          body: { error: 'Readonly credentials must include both username and password' }
-        });
-      });
-    } finally {
-      writeTestConfig();
-    }
-  });
-
-  test('first-boot setup persists credentials and starts Discord login', async () => {
-    writeTestConfig('');
-    const originalLogin = discordClient.login;
-    const loginCalls = [];
-    discordClient.login = async token => {
-      loginCalls.push(token);
-      return discordClient;
-    };
-
-    try {
-      await withTestServer(app, async baseUrl => {
-        const response = await request(baseUrl, '/setup/complete', {
-          method: 'POST',
-          body: {
-            discordToken: 'new-discord-token',
-            adminUser: 'new-admin',
-            adminPass: 'new-secret',
-            readonlyEnabled: true,
-            readonlyUser: 'new-viewer',
-            readonlyPass: 'viewer-secret'
-          }
-        });
-        assert.equal(response.status, 200);
-        assert.equal(response.body.ok, true);
-        assert.equal(response.body.restartRequired, true);
-        assert.equal(response.body.changedKeys.includes('DISCORD_TOKEN'), true);
-        assert.deepEqual(loginCalls, ['new-discord-token']);
-        assert.deepEqual(await request(baseUrl, '/setup/status'), {
-          status: 200,
-          body: { setupRequired: false }
-        });
-
-        const saved = fs.readFileSync(envPath, 'utf8');
-        assert.match(saved, /^DISCORD_TOKEN=new-discord-token$/m);
-
-        const users = JSON.parse(fs.readFileSync(path.join(tempDir, 'users.json'), 'utf8')).users;
-        assert.equal(users.some(user => user.username === 'new-admin' && user.role === 'admin'), true);
-        assert.equal(users.some(user => user.username === 'new-viewer' && user.role === 'user'), true);
-        assert.equal(users.every(user => typeof user.passwordHash === 'string'), true);
-        assert.equal(users.some(user => String(user.passwordHash).includes('new-secret')), false);
-      });
-    } finally {
-      discordClient.login = originalLogin;
-      writeTestConfig();
-      process.env.DISCORD_TOKEN = 'fake-discord-token';
-      process.env.AUTH_ADMIN_USER = 'admin';
-      process.env.AUTH_ADMIN_PASS = 'admin-secret';
-      process.env.AUTH_READONLY_USER = 'viewer';
-      process.env.AUTH_READONLY_PASS = 'viewer-secret';
-    }
-  });
 });

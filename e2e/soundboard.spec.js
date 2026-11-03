@@ -41,12 +41,6 @@ async function mockSoundboard(page, options = {}) {
         secret: true
       },
       {
-        key: 'AUTH_ADMIN_USER',
-        value: 'admin',
-        section: 'Auth and Session Settings',
-        description: 'Admin username.'
-      },
-      {
         key: 'RATE_LIMIT_AUDIO',
         value: '120',
         section: 'Uploads and Rate Limit',
@@ -150,7 +144,14 @@ async function mockSoundboard(page, options = {}) {
       });
     }
     if (apiPath === '/api/settings/config' && method === 'GET') {
-      return route.fulfill({ json: { items: Object.values(state.settings) } });
+      return route.fulfill({
+        json: {
+          items: Object.values(state.settings).map(item => ({
+            ...item,
+            value: item.secret ? '' : item.value
+          }))
+        }
+      });
     }
     if (apiPath === '/api/settings/config' && method === 'POST') {
       const nextValues = body?.values || {};
@@ -158,9 +159,12 @@ async function mockSoundboard(page, options = {}) {
       if (audioRateLimit !== undefined && !/^\d+$/.test(String(audioRateLimit))) {
         return route.fulfill({ status: 400, json: { error: 'RATE_LIMIT_AUDIO must be an integer' } });
       }
-      const changedKeys = Object.keys(nextValues).filter(key => (
-        state.settings[key] && state.settings[key].value !== String(nextValues[key])
-      ));
+      const changedKeys = Object.keys(nextValues).filter(key => {
+        const item = state.settings[key];
+        if (!item) return false;
+        if (item.secret && String(nextValues[key]) === '') return false;
+        return item.value !== String(nextValues[key]);
+      });
       for (const key of changedKeys) state.settings[key].value = String(nextValues[key]);
       return route.fulfill({
         json: {

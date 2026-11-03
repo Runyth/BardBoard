@@ -25,6 +25,8 @@ fs.writeFileSync(envPath, [
 ].join('\n') + '\n', 'utf8');
 
 process.env.BARDBOARD_ENV_PATH = envPath;
+process.env.BARDBOARD_CONFIG_PATH = '';
+process.env.BARDBOARD_USERS_PATH = path.join(tempDir, 'users.json');
 process.env.NODE_ENV = 'test';
 
 const { app, discordClient } = require('../server/app');

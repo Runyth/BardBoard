@@ -22,6 +22,7 @@ const { Events, Client, GatewayIntentBits } = require('discord.js');
 const helmet = require('helmet');
 const cors = require('cors');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 const FileStore = require('session-file-store')(session);
 const fs = require('fs');
 const { createDiscordAudioService } = require('./services/discordAudio');
@@ -118,14 +119,8 @@ withFsRetry(sessionStore, 'set');
 withFsRetry(sessionStore, 'touch');
 withMissingSessionAsEmpty(sessionStore);
 
-function hasDiscordToken() {
-  const item = readCurrentConfig().find(configItem => configItem.key === 'DISCORD_TOKEN');
-  const token = String(item?.value || '').trim();
-  return Boolean(token && !/pasteyourdiscordbottokenhere/i.test(token));
-}
-
 function isSetupRequiredNow() {
-  return !hasDiscordToken() || !userStore.hasAdmin();
+  return !userStore.hasAdmin();
 }
 
 function getAuthConfig() {
@@ -136,19 +131,10 @@ function getAuthConfig() {
 }
 
 function getSessionUser(req) {
-  if (!req.session?.authenticated) return null;
-  if (req.session.userId) {
-    const user = userStore.findById(req.session.userId);
-    if (!user || user.disabled || user.authVersion !== req.session.authVersion) return null;
-    return user;
-  }
-  return {
-    id: null,
-    username: req.session.username || 'legacy',
-    role: req.session.role === 'admin' ? 'admin' : 'user',
-    disabled: false,
-    authVersion: null
-  };
+  if (!req.session?.authenticated || !req.session.userId) return null;
+  const user = userStore.findById(req.session.userId);
+  if (!user || user.disabled || user.authVersion !== req.session.authVersion) return null;
+  return user;
 }
 
 function permissionsForUser(user) {
@@ -231,12 +217,33 @@ app.use(session({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use((req, _res, next) => {
+  if (!req.body) req.body = {};
+  next();
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.RATE_LIMIT_LOGIN || '20', 10),
+  skipSuccessfulRequests: true,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Try again later.' }
+});
+const setupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.RATE_LIMIT_SETUP || '10', 10),
+  skipSuccessfulRequests: true,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many setup attempts. Try again later.' }
+});
 
 app.get('/setup/status', (_req, res) => {
   res.status(200).json({ setupRequired: isSetupRequiredNow() });
 });
 
-app.post('/setup/complete', (req, res) => {
+app.post('/setup/complete', setupLimiter, (req, res) => {
   if (!isSetupRequiredNow()) return res.status(409).json({ error: 'Setup already completed' });
 
   const discordToken = String(req.body?.discordToken || '').trim();
@@ -290,7 +297,8 @@ app.post('/setup/complete', (req, res) => {
   });
 });
 
-app.post('/auth/login', (req, res) => {
+app.post('/auth/login', loginLimiter, (req, res) => {
+  if (isSetupRequiredNow()) return res.status(503).json({ error: 'Initial setup required', setupRequired: true });
   const auth = getAuthConfig();
   if (!auth.authEnabled) return res.status(200).json({ ok: true });
 
@@ -385,11 +393,17 @@ const ACTION_PERMISSIONS = new Map([
   ['DELETE /audio-category', PERMISSIONS.FILES_MANAGE]
 ]);
 
+function normalizeRequestPath(rawPath) {
+  const segments = String(rawPath || '').split('/').filter(Boolean).map(segment => segment.toLowerCase());
+  return segments.length ? `/${segments.join('/')}` : '/';
+}
+
 function permissionForRequest(req) {
-  if (req.path === '/settings/restart') return PERMISSIONS.SYSTEM_RESTART;
-  if (req.path.startsWith('/settings/')) return PERMISSIONS.SETTINGS_MANAGE;
-  if (req.path === '/users' || req.path.startsWith('/users/')) return PERMISSIONS.USERS_MANAGE;
-  return ACTION_PERMISSIONS.get(`${req.method} ${req.path}`) || null;
+  const requestPath = normalizeRequestPath(req.path);
+  if (requestPath === '/settings/restart') return PERMISSIONS.SYSTEM_RESTART;
+  if (requestPath.startsWith('/settings/')) return PERMISSIONS.SETTINGS_MANAGE;
+  if (requestPath === '/users' || requestPath.startsWith('/users/')) return PERMISSIONS.USERS_MANAGE;
+  return ACTION_PERMISSIONS.get(`${req.method} ${requestPath}`) || null;
 }
 
 app.use((req, res, next) => {
@@ -423,7 +437,7 @@ app.get('/settings/config', (_req, res) => {
     secret: Boolean(item.secret),
     type: item.type || 'string',
     configured: Boolean(item.configured),
-    value: item.value
+    value: item.secret ? '' : item.value
     }));
   res.json({ items });
 });
@@ -440,13 +454,7 @@ app.post('/settings/config', (req, res) => {
     .filter(Boolean);
   const botRestartRequired = changedItems.some(item => item.restartScope === 'bot' || item.restartScope === 'both');
   const webRestartRequired = changedItems.some(item => item.restartScope === 'web' || item.restartScope === 'both');
-  const authKeys = new Set([
-    'AUTH_ADMIN_USER',
-    'AUTH_ADMIN_PASS',
-    'AUTH_READONLY_USER',
-    'AUTH_READONLY_PASS'
-  ]);
-  const authChanged = changedKeys.some(key => authKeys.has(key));
+  const authChanged = changedKeys.includes('SESSION_SECRET');
 
   return res.json({
     ok: true,
@@ -542,6 +550,16 @@ app.get('/api-docs', (_req, res) => {
 </html>`);
 });
 
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+app.use((error, _req, res, next) => {
+  if (res.headersSent) return next(error);
+  console.error('Unhandled API error:', error);
+  res.status(error?.statusCode || 500).json({ error: 'Internal server error' });
+});
+
 discordClient.on(Events.ClientReady, () => {
   console.log(`Logged in as ${discordClient.user.tag}!`);
 });
@@ -593,6 +611,7 @@ function stop() {
     Promise.resolve().then(() => discordClient.destroy())
   ]).then(() => {
     if (httpServer === serverToClose) httpServer = null;
+    discordLoginStarted = false;
   });
 
   return stopPromise;

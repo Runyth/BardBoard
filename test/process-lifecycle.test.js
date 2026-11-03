@@ -45,7 +45,7 @@ async function startProductionServer() {
   const sessionDir = path.join(runtimeDir, 'sessions').replace(/\\/g, '/');
   const port = await getFreePort();
   fs.writeFileSync(envPath, [
-    'DISCORD_TOKEN=invalid-test-token',
+    'DISCORD_TOKEN=',
     'AUTH_ADMIN_USER=admin',
     'AUTH_ADMIN_PASS=admin-secret',
     'SESSION_SECRET=lifecycle-test-secret',
@@ -62,6 +62,8 @@ async function startProductionServer() {
     env: {
       ...process.env,
       BARDBOARD_ENV_PATH: envPath,
+      BARDBOARD_CONFIG_PATH: '',
+      BARDBOARD_USERS_PATH: path.join(runtimeDir, 'users.json'),
       BOT_PORT: String(port),
       NODE_ENV: 'production'
     },
