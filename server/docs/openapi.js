@@ -232,6 +232,55 @@ const openApiSpec = {
         }
       }
     },
+    '/audio-library': {
+      get: {
+        tags: ['files'],
+        summary: 'Scan every playable audio file, including upload-unsupported formats',
+        responses: {
+          200: {
+            description: 'Library scan results',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    files: { type: 'array', items: { $ref: '#/components/schemas/LibraryFile' } }
+                  }
+                }
+              }
+            }
+          },
+          500: { description: 'Library could not be scanned' }
+        }
+      }
+    },
+    '/audio-library/add': {
+      post: {
+        tags: ['files'],
+        summary: 'Add hard-linked references from library tracks into categories',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['paths', 'categories'],
+                properties: {
+                  paths: { type: 'array', items: { type: 'string' } },
+                  categories: { type: 'array', items: { type: 'string' } }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'References added, with skipped entries and reasons' },
+          400: { description: 'Validation error' },
+          404: { description: 'Track or category not found' },
+          500: { description: 'Reference creation failed and was rolled back' }
+        }
+      }
+    },
     '/upload-audio': {
       post: {
         tags: ['files'],
@@ -257,7 +306,21 @@ const openApiSpec = {
         },
         responses: {
           200: { description: 'Upload completed' },
-          400: { description: 'Validation error' }
+          400: { description: 'Validation error' },
+          409: {
+            description: 'Duplicate content; resolve the staged upload',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string' },
+                    duplicate: { $ref: '#/components/schemas/DuplicateUpload' }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -304,9 +367,14 @@ const openApiSpec = {
                         type: 'object',
                         properties: {
                           index: { type: 'integer' },
-                          fileName: { type: 'string' }
+                          fileName: { type: 'string' },
+                          path: { type: 'string' }
                         }
                       }
+                    },
+                    duplicates: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/DuplicateUpload' }
                     },
                     failed: {
                       type: 'array',
@@ -325,6 +393,45 @@ const openApiSpec = {
             }
           },
           400: { description: 'Validation error' }
+        }
+      }
+    },
+    '/upload-audio-resolve': {
+      post: {
+        tags: ['files'],
+        summary: 'Resolve staged duplicate uploads by replacing or discarding them',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['resolutions'],
+                properties: {
+                  resolutions: {
+                    type: 'array',
+                    maxItems: 2000,
+                    items: {
+                      type: 'object',
+                      required: ['token', 'action'],
+                      properties: {
+                        token: { type: 'string' },
+                        action: { type: 'string', enum: ['discard', 'replace'] },
+                        fileName: { type: 'string' },
+                        category: { type: 'string' },
+                        existingPath: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Per-upload resolution results, including failures' },
+          400: { description: 'Validation error' },
+          500: { description: 'Resolutions could not be processed' }
         }
       }
     },
@@ -855,6 +962,30 @@ const openApiSpec = {
             type: 'object',
             additionalProperties: { type: 'array', items: { type: 'string' } }
           }
+        }
+      },
+      LibraryFile: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          name: { type: 'string' },
+          extension: { type: 'string' },
+          size: { type: 'integer' },
+          modifiedAt: { type: 'number' },
+          hash: { type: 'string' },
+          uploadSupported: { type: 'boolean' }
+        }
+      },
+      DuplicateUpload: {
+        type: 'object',
+        properties: {
+          token: { type: 'string' },
+          fileName: { type: 'string' },
+          category: { type: 'string' },
+          existingPath: { type: 'string' },
+          size: { type: 'integer' },
+          hash: { type: 'string' },
+          index: { type: 'integer' }
         }
       },
       VoiceChannelOption: {

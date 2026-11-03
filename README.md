@@ -316,14 +316,17 @@ You can also copy `.env.sample` to `.env` and pre-fill values manually.
 
 ## Adding Sounds
 
-Supported formats:
+Upload formats:
 
 - MP3
 - WAV
 - OGG
 - M4A
 
-You can add sounds in two ways.
+Existing files with other playable audio extensions such as FLAC, OPUS, or AAC
+are discovered by the audio library and can be linked into categories.
+
+You can add sounds in three ways.
 
 ### Browser Upload
 
@@ -334,6 +337,16 @@ Click **Add Song**, then drag files into the upload modal or browse for files. Y
 - Choose an existing category.
 - Create a new category during upload.
 - See upload progress.
+- Review uploads whose content already exists and either replace the existing
+  track or discard the new upload.
+
+### Browse Audio Library
+
+Click **Browse Library** to scan every playable audio file in `audio-files/`,
+including formats that browser uploads do not accept. Select one or more tracks
+and categories, then choose **Add references** to make the tracks available in
+those categories. References share the same audio content instead of copying it,
+so duplicate content is not added twice to a category.
 
 ### Manual Files
 

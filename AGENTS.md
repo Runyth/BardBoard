@@ -12,9 +12,13 @@ React 19. Node.js 24 is required.
   API routes, and graceful startup/shutdown.
 - `server/services/discordAudio.js` — per-guild playback state, queues, voice
   connections, and FFmpeg processing.
-- `server/routes/` — audio, playlist, and file/category API route factories.
+- `server/services/audioLibrary.js` — recursive audio library scan, content-hash
+  cache, and staging directory locking.
+- `server/routes/` — audio, playlist, and file/category API route factories,
+  including duplicate upload resolution and library references.
 - `server/middleware/upload.js` — multipart upload handling.
-- `server/utils/` — environment configuration, path safety, and validation.
+- `server/utils/` — environment configuration, path safety, validation, and
+  SHA-256 audio hashing.
 - `server/docs/openapi.js` — OpenAPI document served at `/api-docs.json`.
 - `app/` — Next.js App Router pages and client components.
 - `app/lib/soundboardApi.mjs` — frontend API client and response handling.
@@ -101,5 +105,7 @@ Compose.
 - Use verb-noun CTAs that mirror the question/title, prefer accessible controls, and follow existing design patterns.
 
 ## Commits
+
+Commit in self-contained, easy-to-review commits according to this specification.
 
 Follow the [Capitalized Conventional Commits Dialect](https://gist.github.com/Akkitto/92154570147ba475e6bca70e709368ff).
