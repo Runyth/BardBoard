@@ -228,7 +228,18 @@ function createUserStore(options = {}) {
   }
 
   function save() {
-    persist();
+    try {
+      persist();
+    } catch (error) {
+      try {
+        loaded = false;
+        users = [];
+        load();
+      } catch {
+        // Preserve the original persistence error for the caller.
+      }
+      throw error;
+    }
   }
 
   function list() {

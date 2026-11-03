@@ -18,9 +18,11 @@
 const express = require('express');
 
 function handleError(res, error) {
-  return res.status(error?.statusCode || 400).json({
-    error: error?.message || 'User operation failed'
-  });
+  if (error?.statusCode) {
+    return res.status(error.statusCode).json({ error: error.message });
+  }
+  console.error('User operation failed:', error);
+  return res.status(500).json({ error: 'User operation failed' });
 }
 
 function createUserRoutes(userStore) {
