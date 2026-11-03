@@ -141,13 +141,16 @@ SESSION_HOST_DIR=./sessions
 ```
 
 `SESSION_HOST_DIR` selects the directory on the Docker host. Inside the bot
-container it is always mounted at `/usr/src/app/sessions`; keep the application
-setting `SESSION_DIR=./sessions` when using Docker. `BACKEND_URL` is configured
-automatically by Compose and normally should not be overridden.
+container it is mounted at `/usr/src/app/sessions`, and Compose sets
+`SESSION_DIR=/usr/src/app/sessions`; the `./sessions` value is for local runs.
+`BACKEND_URL` is configured automatically by Compose and normally should not be
+overridden.
 
-If you change a port or `SESSION_HOST_DIR`, recreate the containers. Changes to
-`UPLOAD_MAX_MB` also require rebuilding the web image because Next.js reads the
-proxy upload limit during its production build:
+If you change `SESSION_HOST_DIR`, recreate the containers. Changing `BOT_PORT`
+requires both recreating the containers and rebuilding the web image because
+Next.js bakes the backend proxy target into the build. Changes to `UPLOAD_MAX_MB`
+also require rebuilding the web image because Next.js reads the proxy upload
+limit during its production build:
 
 ```bash
 docker compose up --build -d --wait
@@ -458,14 +461,16 @@ the bot/API container discovers it.
 `SESSION_HOST_DIR` is a Docker Compose variable rather than an application setting,
 so it is not shown or edited by the BardBoard settings page.
 
-The setup page requires:
+The setup page appears when no active admin exists and requires:
 
 - `DISCORD_TOKEN`
 - An admin username and password (created in the user store)
 
-It can also create an optional standard user. Existing `AUTH_ADMIN_USER`,
+It can also create an optional standard user. If an admin already exists but the
+Discord token is missing, sign in and set `DISCORD_TOKEN` from the Settings page.
+Existing `AUTH_ADMIN_USER`,
 `AUTH_ADMIN_PASS`, `AUTH_READONLY_USER`, and `AUTH_READONLY_PASS` values are used
-once to seed the user store when `users.json` does not exist; after migration,
+once to seed the user store when it has no users; after migration,
 manage accounts from the Users page.
 
 | Variable | Required | Default | Description | Apply method |
@@ -477,13 +482,15 @@ manage accounts from the Users page.
 | `AUTH_READONLY_PASS` | No | empty | Legacy standard password used to seed `users.json`. | Restart |
 | `SESSION_SECRET` | Recommended | generated | Session signing secret. | Restart |
 | `LOGIN_REMEMBER_DAYS` | No | `30` | Remember-me cookie duration. | Restart |
-| `SESSION_DIR` | No | `./sessions` | Application session path. Keep `./sessions` in Docker. | Restart |
+| `SESSION_DIR` | No | `./sessions` | Local session path; Compose overrides it with `/usr/src/app/sessions`. | Restart |
 | `SESSION_HOST_DIR` | No | `./sessions` | Docker host directory mounted for session persistence. | Recreate containers |
 | `NOISES_FOLDER` | No | `!noises` | Category folder used for overlay noises. | Restart |
 | `NOISES_VOLUME` | No | `2` | Overlay noise gain (`1` = original level, `2` = double amplitude; range `0`-`10`). | Restart |
 | `RATE_LIMIT_AUDIO` | No | `120` | Requests/minute for audio actions. | Restart |
 | `RATE_LIMIT_FILES` | No | `60` | Requests/minute for file actions. | Restart |
 | `RATE_LIMIT_AUDIO_STATUS` | No | `600` | Requests/minute for status polling. | Restart |
+| `RATE_LIMIT_LOGIN` | No | `20` | Failed login attempts per 15 minutes. | Restart |
+| `RATE_LIMIT_SETUP` | No | `10` | Failed setup attempts per 15 minutes. | Restart |
 | `RATE_LIMIT_PLAYLIST` | No | `120` | Requests/minute for playlist actions. | Restart |
 | `CORS_ORIGINS` | No | empty | Comma-separated allowed origins. | Restart |
 | `SESSION_FILE_RETRIES` | No | `5` | Session file-store retry attempts. | Restart |
@@ -492,7 +499,7 @@ manage accounts from the Users page.
 | `SESSION_FILE_RETRY_MAX_MS` | No | `200` | Maximum session retry delay in ms. | Restart |
 | `SESSION_WRITE_RETRIES` | No | `6` | Extra retries for transient file-lock races. | Restart |
 | `WEB_PORT` | No | `3000` | Web UI port. | Recreate containers |
-| `BOT_PORT` | No | `3001` | Bot/API port. | Recreate containers |
+| `BOT_PORT` | No | `3001` | Bot/API port. | Recreate containers and rebuild web image |
 | `BACKEND_URL` | No | `http://localhost:3001` | Next.js API proxy target; Compose sets it automatically. | Restart locally; Docker-managed |
 | `UPLOAD_MAX_MB` | No | `50` | Max upload size per file in MB. | Rebuild containers |
 | `BARDBOARD_ENV_PATH` | No | varies | Path to the legacy `.env` file. Docker sets this automatically. | Restart |

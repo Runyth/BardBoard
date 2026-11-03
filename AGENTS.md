@@ -59,15 +59,15 @@ Compose.
 - User accounts live in `users.json` next to the active config file (or
   `BARDBOARD_USERS_PATH`). Passwords are scrypt-hashed; never add plaintext
   passwords or commit the user store. Legacy `AUTH_*` credentials only seed the
-  store when it does not exist.
+  store when it has no users.
 - Roles are `admin` (all permissions) and `user` (soundboard, files, playlists).
   Protect the last active admin in user-management changes.
 - `SESSION_DIR` defaults to `sessions/`; audio files live in `audio-files/`.
 - In Docker, `WEB_PORT`, `BOT_PORT`, `BACKEND_URL`, `UPLOAD_MAX_MB`, and
   `SESSION_DIR` come from the deployment environment and override persisted
   values. Bot credentials remain authoritative in the persisted config volume.
-- `/health` is public. Other bot APIs require authentication unless no admin or
-  readonly account is configured.
+- `/health` is public. Other bot APIs require authentication unless no users are
+  configured. First-boot setup runs only while no active admin exists.
 
 ## Testing Notes
 
