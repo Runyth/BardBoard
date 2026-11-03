@@ -20,14 +20,17 @@ const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { createUpload } = require('../middleware/upload');
+const { createAudioLibrary } = require('../services/audioLibrary');
+const { hashAudioFile } = require('../utils/audioHash');
 const { AUDIO_DIR } = require('../constants');
-const { sanitizeCategory, resolveAudioPathFrom, hasAllowedExt } = require('../utils/path');
+const { sanitizeCategory, resolveAudioPathFrom, hasPlayableExt } = require('../utils/path');
 
 function createFileRoutes(audioService, options = {}) {
   const router = express.Router();
   const audioDir = path.resolve(options.audioDir || AUDIO_DIR);
-  const uploadMiddleware = options.upload || createUpload();
   const fsImpl = options.fs || fs;
+  const library = options.audioLibrary || createAudioLibrary({ audioDir, fs: fsImpl });
+  const uploadMiddleware = options.upload || createUpload({ audioDir, fs: fsImpl, stagingDir: library.stagingDir });
   const resolveAudioPath = relativePath => resolveAudioPathFrom(audioDir, relativePath);
   const limiter = rateLimit({
     windowMs: 60 * 1000,
@@ -35,6 +38,116 @@ function createFileRoutes(audioService, options = {}) {
     standardHeaders: 'draft-7',
     legacyHeaders: false
   });
+
+  const normalizeRelativePath = value => String(value || '').replace(/\\/g, '/');
+
+  function discardStaged(stagingPath) {
+    if (!stagingPath) return;
+    try {
+      fsImpl.unlinkSync(stagingPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn('Could not remove staged upload:', error.message);
+    }
+  }
+
+  function commitStaged(stagingPath, targetPath) {
+    fsImpl.mkdirSync(path.dirname(targetPath), { recursive: true });
+    try {
+      fsImpl.linkSync(stagingPath, targetPath);
+      fsImpl.unlinkSync(stagingPath);
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error;
+      fsImpl.copyFileSync(stagingPath, targetPath, fs.constants.COPYFILE_EXCL);
+      fsImpl.unlinkSync(stagingPath);
+    }
+  }
+
+  function finalizeUpload(file, category, entries) {
+    const targetRelPath = category ? `${category}/${file.filename}` : file.filename;
+    const targetPath = resolveAudioPath(targetRelPath);
+    if (!targetPath) return { error: 'Invalid target path' };
+
+    const existingTarget = entries.find(entry => entry.path === targetRelPath);
+    if (existingTarget && existingTarget.hash !== file.hash) {
+      return { error: 'A file with the same name already exists' };
+    }
+    if (fsImpl.existsSync(targetPath) && !existingTarget) {
+      return { error: 'A file with the same name already exists' };
+    }
+
+    const duplicate = existingTarget || library.findDuplicate(entries, file.hash);
+    if (duplicate) {
+      return {
+        duplicate: {
+          token: path.basename(file.stagingPath),
+          fileName: file.filename,
+          category,
+          existingPath: duplicate.path,
+          size: file.size,
+          hash: file.hash,
+          index: file.index
+        }
+      };
+    }
+
+    try {
+      commitStaged(file.stagingPath, targetPath);
+      return { uploaded: { index: file.index, fileName: file.filename, path: targetRelPath } };
+    } catch (error) {
+      if (error.code === 'EEXIST') return { error: 'A file with the same name already exists' };
+      console.error('Could not finalize upload:', error);
+      return { error: 'Upload failed' };
+    }
+  }
+
+  function replaceStagedUpload(stagingPath, existingPath, targetPath) {
+    if (existingPath === targetPath) {
+      fsImpl.renameSync(stagingPath, targetPath);
+      return;
+    }
+
+    if (fsImpl.existsSync(targetPath)) {
+      throw Object.assign(new Error('A file with the same name already exists'), { code: 'EEXIST' });
+    }
+
+    const backupPath = `${stagingPath}.backup`;
+    let backedUp = false;
+    let removedExisting = false;
+
+    try {
+      fsImpl.linkSync(existingPath, backupPath);
+      backedUp = true;
+      fsImpl.unlinkSync(existingPath);
+      removedExisting = true;
+      commitStaged(stagingPath, targetPath);
+    } catch (error) {
+      if (removedExisting) {
+        try {
+          fsImpl.linkSync(backupPath, existingPath);
+        } catch (restoreError) {
+          console.error('Could not restore replaced track:', restoreError);
+        }
+      }
+      throw error;
+    } finally {
+      if (backedUp) {
+        try {
+          fsImpl.unlinkSync(backupPath);
+        } catch (error) {
+          if (error.code !== 'ENOENT') console.warn('Could not remove replacement backup:', error.message);
+        }
+      }
+    }
+  }
+
+  function resolveStagedPath(token) {
+    const raw = String(token || '');
+    if (!raw || raw !== path.basename(raw) || raw.includes('..')) return null;
+    const stagingRoot = path.resolve(library.stagingDir);
+    const stagedPath = path.resolve(stagingRoot, raw);
+    if (!stagedPath.startsWith(stagingRoot + path.sep)) return null;
+    return stagedPath;
+  }
 
   /**
    * Handles the `/audio-files` API endpoint to return a list of audio files
@@ -57,13 +170,14 @@ function createFileRoutes(audioService, options = {}) {
     const response = { root: [], categories: {} };
 
     entries.forEach(entry => {
-      if (entry.isFile() && hasAllowedExt(entry.name)) {
+      if (entry.name.startsWith('.')) return;
+      if (entry.isFile() && hasPlayableExt(entry.name)) {
         response.root.push(entry.name);
       } else if (entry.isDirectory()) {
         const subDirPath = path.join(baseDir, entry.name);
         try {
           const subFiles = fsImpl.readdirSync(subDirPath)
-            .filter(f => hasAllowedExt(f))
+            .filter(f => hasPlayableExt(f))
             .map(f => `${entry.name}/${f}`);
           response.categories[entry.name] = subFiles;
         } catch (err) {
@@ -75,6 +189,147 @@ function createFileRoutes(audioService, options = {}) {
     res.json(response);
   });
 
+  router.get('/audio-library', limiter, async (_req, res) => {
+    try {
+      const files = await library.scan();
+      return res.json({ files });
+    } catch (error) {
+      console.error('Could not scan audio library:', error);
+      return res.status(500).json({ error: 'Could not scan audio library' });
+    }
+  });
+
+  router.post('/audio-library/add', limiter, async (req, res) => {
+    const rawPaths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+    const rawCategories = Array.isArray(req.body?.categories) ? req.body.categories : [];
+    if (!rawPaths.length || !rawCategories.length) {
+      return res.status(400).json({ error: 'Select at least one track and category' });
+    }
+    if (rawPaths.length * rawCategories.length > 2000) {
+      return res.status(400).json({ error: 'Too many track and category combinations' });
+    }
+
+    const sourcePaths = [...new Set(rawPaths.map(normalizeRelativePath))];
+    const categories = [...new Set(rawCategories.map(value => String(value || '').trim()))];
+    for (const sourcePath of sourcePaths) {
+      if (!sourcePath || sourcePath.includes('..') || sourcePath.startsWith('/')) {
+        return res.status(400).json({ error: 'Invalid track path' });
+      }
+    }
+    for (const category of categories) {
+      if (!category || sanitizeCategory(category) !== category) {
+        return res.status(400).json({ error: 'Invalid category' });
+      }
+      const categoryPath = resolveAudioPath(category);
+      if (!categoryPath || !fsImpl.existsSync(categoryPath) || !fsImpl.statSync(categoryPath).isDirectory()) {
+        return res.status(404).json({ error: `Category not found: ${category}` });
+      }
+    }
+
+    try {
+      return await library.withLock(async () => {
+        const entries = await library.scan();
+        const entryMap = new Map(entries.map(entry => [entry.path, entry]));
+        const missing = sourcePaths.filter(sourcePath => !entryMap.has(sourcePath));
+        if (missing.length) {
+          return res.status(404).json({ error: `Track not found: ${missing[0]}` });
+        }
+
+        const added = [];
+        const skipped = [];
+        const operations = [];
+        const categoryHashes = new Map(categories.map(category => [
+          category,
+          new Set(entries
+            .filter(entry => entry.path.startsWith(`${category}/`) && !entry.path.slice(category.length + 1).includes('/'))
+            .map(entry => entry.hash))
+        ]));
+
+        for (const sourcePath of sourcePaths) {
+          const sourceEntry = entryMap.get(sourcePath);
+          const sourceFullPath = resolveAudioPath(sourcePath);
+          let sourceStat;
+          try {
+            sourceStat = fsImpl.statSync(sourceFullPath);
+          } catch {
+            return res.status(404).json({ error: `Track not found: ${sourcePath}` });
+          }
+
+          for (const category of categories) {
+            const targetRelPath = `${category}/${path.basename(sourcePath)}`;
+            const targetFullPath = resolveAudioPath(targetRelPath);
+            if (sourcePath === targetRelPath) {
+              skipped.push({ source: sourcePath, category, reason: 'already-in-category' });
+              continue;
+            }
+            if (fsImpl.existsSync(targetFullPath)) {
+              const targetEntry = entryMap.get(targetRelPath);
+              try {
+                const targetStat = fsImpl.statSync(targetFullPath);
+                const sameInode = sourceStat.ino !== 0
+                  && targetStat.ino !== 0
+                  && sourceStat.dev === targetStat.dev
+                  && sourceStat.ino === targetStat.ino;
+                if (sameInode) {
+                  skipped.push({ source: sourcePath, category, reason: 'already-linked' });
+                  continue;
+                }
+              } catch {
+                skipped.push({ source: sourcePath, category, reason: 'name-conflict' });
+                continue;
+              }
+              if (targetEntry && targetEntry.hash === sourceEntry.hash) {
+                skipped.push({ source: sourcePath, category, reason: 'duplicate-content' });
+              } else {
+                skipped.push({ source: sourcePath, category, reason: 'name-conflict' });
+              }
+              continue;
+            }
+            if (categoryHashes.get(category)?.has(sourceEntry.hash)) {
+              skipped.push({ source: sourcePath, category, reason: 'duplicate-content' });
+              continue;
+            }
+            operations.push({ sourcePath, category, targetRelPath, targetFullPath });
+          }
+        }
+
+        const created = [];
+        try {
+          for (const operation of operations) {
+            fsImpl.linkSync(resolveAudioPath(operation.sourcePath), operation.targetFullPath);
+            created.push(operation);
+            added.push({
+              source: operation.sourcePath,
+              category: operation.category,
+              path: operation.targetRelPath
+            });
+          }
+        } catch (error) {
+          created.forEach(operation => {
+            try {
+              fsImpl.unlinkSync(operation.targetFullPath);
+            } catch (cleanupError) {
+              if (cleanupError.code !== 'ENOENT') {
+                console.warn('Could not roll back track reference:', cleanupError.message);
+              }
+            }
+          });
+          added.length = 0;
+          const reason = error.code === 'EXDEV'
+            ? 'Cannot link tracks across filesystems'
+            : 'Could not add track reference';
+          console.error('Could not add library tracks:', error);
+          return res.status(500).json({ ok: false, error: reason });
+        }
+
+        return res.json({ ok: true, added, skipped });
+      });
+    } catch (error) {
+      console.error('Could not add library tracks:', error);
+      return res.status(500).json({ error: 'Could not add library tracks' });
+    }
+  });
+
   /**
    * Handles the `/upload-audio` API endpoint to upload a new audio file.
    *
@@ -82,7 +337,7 @@ function createFileRoutes(audioService, options = {}) {
    * @query {string} category - Optional category folder name.
    */
   router.post('/upload-audio', limiter, (req, res) => {
-    uploadMiddleware.single('file')(req, res, err => {
+    uploadMiddleware.single('file')(req, res, async err => {
       if (err) {
         if (['EACCES', 'EIO', 'ENOSPC', 'EROFS'].includes(err.code)) {
           console.error('Upload failed:', err);
@@ -91,7 +346,34 @@ function createFileRoutes(audioService, options = {}) {
         return res.status(400).json({ error: err.message });
       }
       if (!req.file) return res.status(400).json({ error: 'Missing file' });
-      return res.json({ ok: true, file: req.file.filename });
+
+      const input = String(req.query.category || '').trim();
+      const category = sanitizeCategory(input);
+      if (input && category !== input) {
+        discardStaged(req.file.stagingPath);
+        return res.status(400).json({ error: 'Invalid category' });
+      }
+
+      try {
+        const result = await library.withLock(async () => {
+          const entries = await library.scan();
+          return finalizeUpload(req.file, category, entries);
+        });
+
+        if (result.duplicate) {
+          return res.status(409).json({ error: 'Duplicate audio file', duplicate: result.duplicate });
+        }
+        if (result.error) {
+          discardStaged(req.file.stagingPath);
+          const status = result.error === 'Upload failed' ? 500 : 400;
+          return res.status(status).json({ error: result.error });
+        }
+        return res.json({ ok: true, file: req.file.filename });
+      } catch (error) {
+        discardStaged(req.file.stagingPath);
+        console.error('Upload failed:', error);
+        return res.status(500).json({ error: 'Upload failed' });
+      }
     });
   });
 
@@ -109,7 +391,7 @@ function createFileRoutes(audioService, options = {}) {
     req.uploadFailures = [];
     req._batchIndex = 0;
 
-    uploadMiddleware.array('files')(req, res, err => {
+    uploadMiddleware.array('files')(req, res, async err => {
       if (err) {
         if (['EACCES', 'EIO', 'ENOSPC', 'EROFS'].includes(err.code)) {
           console.error('Batch upload failed:', err);
@@ -118,16 +400,155 @@ function createFileRoutes(audioService, options = {}) {
         return res.status(400).json({ error: err.message });
       }
 
-      const files = Array.isArray(req.files) ? req.files : [];
-      const uploaded = files
-        .filter(file => !file.skipped)
-        .map(file => ({ index: file.index, fileName: file.filename }));
-      const failed = req.uploadFailures
-        .slice()
-        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const files = (Array.isArray(req.files) ? req.files : []).filter(file => !file.skipped);
+      req.uploadFailures = Array.isArray(req.uploadFailures) ? req.uploadFailures : [];
 
-      return res.json({ ok: failed.length === 0, uploaded, failed });
+      try {
+        const result = await library.withLock(async () => {
+          const entries = await library.scan();
+          const uploaded = [];
+          const duplicates = [];
+          const failed = req.uploadFailures.slice();
+
+          for (const file of files) {
+            const finalized = finalizeUpload(file, category, entries);
+            if (finalized.uploaded) {
+              uploaded.push(finalized.uploaded);
+              entries.push({ path: finalized.uploaded.path, hash: file.hash });
+            } else if (finalized.duplicate) {
+              duplicates.push(finalized.duplicate);
+            } else {
+              discardStaged(file.stagingPath);
+              failed.push({
+                index: file.index,
+                fileName: file.filename,
+                error: finalized.error || 'Upload failed'
+              });
+            }
+          }
+
+          return { uploaded, duplicates, failed };
+        });
+
+        const failed = result.failed.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        const duplicates = result.duplicates.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        return res.json({
+          ok: failed.length === 0 && duplicates.length === 0,
+          uploaded: result.uploaded,
+          duplicates,
+          failed
+        });
+      } catch (error) {
+        files.forEach(file => discardStaged(file.stagingPath));
+        console.error('Batch upload failed:', error);
+        return res.status(500).json({ error: 'Upload failed' });
+      }
     });
+  });
+
+  router.post('/upload-audio-resolve', limiter, async (req, res) => {
+    const resolutions = Array.isArray(req.body?.resolutions) ? req.body.resolutions : null;
+    if (!resolutions || resolutions.length === 0) {
+      return res.status(400).json({ error: 'No upload resolutions provided' });
+    }
+    if (resolutions.length > 2000) {
+      return res.status(400).json({ error: 'Too many upload resolutions' });
+    }
+
+    const result = { replaced: [], discarded: [], failed: [] };
+
+    try {
+      await library.withLock(async () => {
+        for (const item of resolutions) {
+          const token = String(item?.token || '');
+          const action = String(item?.action || '');
+          const stagedPath = resolveStagedPath(token);
+
+          if (!stagedPath || !fsImpl.existsSync(stagedPath)) {
+            result.failed.push({ token, error: 'Upload is no longer available' });
+            continue;
+          }
+
+          if (action === 'discard') {
+            try {
+              fsImpl.unlinkSync(stagedPath);
+              result.discarded.push({ token });
+            } catch (error) {
+              console.error('Could not discard staged upload:', error);
+              result.failed.push({ token, error: 'Could not discard upload' });
+            }
+            continue;
+          }
+
+          if (action !== 'replace') {
+            result.failed.push({ token, error: 'Invalid resolution action' });
+            continue;
+          }
+
+          const categoryInput = String(item?.category || '').trim();
+          const category = sanitizeCategory(categoryInput);
+          const fileName = String(item?.fileName || '');
+          const existingPath = normalizeRelativePath(item?.existingPath);
+          if (categoryInput && category !== categoryInput) {
+            result.failed.push({ token, error: 'Invalid category' });
+            continue;
+          }
+          if (!fileName || path.basename(fileName) !== fileName || !hasPlayableExt(fileName)) {
+            result.failed.push({ token, error: 'Invalid file name' });
+            continue;
+          }
+          if (!existingPath || existingPath.includes('..') || existingPath.startsWith('/')) {
+            result.failed.push({ token, error: 'Invalid existing path' });
+            continue;
+          }
+
+          const targetRelPath = category ? `${category}/${fileName}` : fileName;
+          const targetPath = resolveAudioPath(targetRelPath);
+          const existingFullPath = resolveAudioPath(existingPath);
+          if (!targetPath || !existingFullPath) {
+            result.failed.push({ token, error: 'Invalid path' });
+            continue;
+          }
+          if (!fsImpl.existsSync(existingFullPath)) {
+            result.failed.push({ token, error: 'Existing track not found' });
+            continue;
+          }
+          if (audioService && typeof audioService.isFileInUse === 'function' && audioService.isFileInUse(existingPath)) {
+            result.failed.push({ token, error: 'Existing track is currently in use' });
+            continue;
+          }
+
+          try {
+            const [stagedHash, existingHash] = await Promise.all([
+              hashAudioFile(stagedPath, fsImpl),
+              hashAudioFile(existingFullPath, fsImpl)
+            ]);
+            if (stagedHash !== existingHash) {
+              result.failed.push({ token, error: 'Duplicate match changed; review the upload again' });
+              continue;
+            }
+
+            replaceStagedUpload(stagedPath, existingFullPath, targetPath);
+            result.replaced.push({ token, existingPath, path: targetRelPath });
+          } catch (error) {
+            if (error.code === 'EEXIST') {
+              result.failed.push({ token, error: 'A file with the same name already exists' });
+            } else {
+              console.error('Could not replace duplicate upload:', error);
+              result.failed.push({ token, error: 'Could not replace existing track' });
+            }
+          }
+        }
+      });
+
+      return res.json({
+        ok: result.failed.length === 0,
+        ...result
+      });
+    } catch (error) {
+      console.error('Could not resolve upload duplicates:', error);
+      return res.status(500).json({ error: 'Could not resolve uploads' });
+    }
   });
 
   /**
@@ -150,7 +571,7 @@ function createFileRoutes(audioService, options = {}) {
     try {
       const stat = fsImpl.statSync(fullPath);
       if (!stat.isFile()) return res.status(400).json({ error: 'Not a file' });
-      if (!hasAllowedExt(fullPath)) return res.status(400).json({ error: 'Invalid file type' });
+      if (!hasPlayableExt(fullPath)) return res.status(400).json({ error: 'Invalid file type' });
       fsImpl.unlinkSync(fullPath);
       return res.json({ ok: true });
     } catch (err) {
@@ -178,7 +599,7 @@ function createFileRoutes(audioService, options = {}) {
       return res.status(400).json({ error: 'Invalid path' });
     }
 
-    if (!hasAllowedExt(sourceRelPath)) {
+    if (!hasPlayableExt(sourceRelPath)) {
       return res.status(400).json({ error: 'Invalid file type' });
     }
 
@@ -266,7 +687,7 @@ function createFileRoutes(audioService, options = {}) {
     if (!sourceRelPath || sourceRelPath.includes('..') || sourceRelPath.startsWith('/')) {
       return res.status(400).json({ error: 'Invalid path' });
     }
-    if (!hasAllowedExt(sourceRelPath)) {
+    if (!hasPlayableExt(sourceRelPath)) {
       return res.status(400).json({ error: 'Invalid file type' });
     }
     if (audioService && typeof audioService.isFileInUse === 'function' && audioService.isFileInUse(sourceRelPath)) {

@@ -511,4 +511,145 @@ describe('file and category API', () => {
       });
     });
   });
+
+  test('content duplicate uploads prompt for discard or replacement', async () => {
+    await withAudioDir(async audioDir => {
+      fs.writeFileSync(path.join(audioDir, 'original.mp3'), 'same audio');
+
+      await callFileApi(audioDir, createAudioService(), async baseUrl => {
+        const uploadDuplicate = name => {
+          const form = new FormData();
+          form.append('file', new Blob(['same audio']), name);
+          return request(baseUrl, '/upload-audio', { method: 'POST', body: form });
+        };
+
+        const duplicate = await uploadDuplicate('discarded.mp3');
+        assert.equal(duplicate.status, 409);
+        assert.equal(duplicate.body.error, 'Duplicate audio file');
+        assert.equal(duplicate.body.duplicate.existingPath, 'original.mp3');
+        assert.equal(duplicate.body.duplicate.hash.length, 64);
+        assert.equal(fs.existsSync(path.join(audioDir, 'discarded.mp3')), false);
+
+        const discarded = await request(baseUrl, '/upload-audio-resolve', post({
+          resolutions: [{ ...duplicate.body.duplicate, action: 'discard' }]
+        }));
+        assert.equal(discarded.status, 200);
+        assert.equal(discarded.body.ok, true);
+        assert.equal(discarded.body.discarded.length, 1);
+        assert.equal(fs.existsSync(path.join(audioDir, 'discarded.mp3')), false);
+
+        const replacement = await uploadDuplicate('replacement.mp3');
+        const replaced = await request(baseUrl, '/upload-audio-resolve', post({
+          resolutions: [{ ...replacement.body.duplicate, action: 'replace' }]
+        }));
+        assert.equal(replaced.status, 200);
+        assert.equal(replaced.body.ok, true);
+        assert.equal(replaced.body.replaced.length, 1);
+        assert.equal(fs.existsSync(path.join(audioDir, 'original.mp3')), false);
+        assert.equal(fs.readFileSync(path.join(audioDir, 'replacement.mp3'), 'utf8'), 'same audio');
+        assert.deepEqual(fs.readdirSync(path.join(audioDir, '.bardboard-staging')), []);
+      });
+    });
+  });
+
+  test('batch uploads report duplicate content separately from failures', async () => {
+    await withAudioDir(async audioDir => {
+      fs.writeFileSync(path.join(audioDir, 'existing.mp3'), 'existing audio');
+
+      await callFileApi(audioDir, createAudioService(), async baseUrl => {
+        const form = new FormData();
+        form.append('files', new Blob(['new audio']), 'new.mp3');
+        form.append('files', new Blob(['new audio']), 'new-copy.mp3');
+        form.append('files', new Blob(['existing audio']), 'duplicate.wav');
+        form.append('files', new Blob(['text']), 'notes.txt');
+
+        const response = await request(baseUrl, '/upload-audio-batch', {
+          method: 'POST',
+          body: form
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.ok, false);
+        assert.deepEqual(response.body.uploaded.map(item => item.fileName), ['new.mp3']);
+        assert.deepEqual(
+          response.body.duplicates.map(item => item.fileName),
+          ['new-copy.mp3', 'duplicate.wav']
+        );
+        assert.deepEqual(response.body.failed.map(item => item.fileName), ['notes.txt']);
+        assert.equal(fs.existsSync(path.join(audioDir, 'new.mp3')), true);
+        assert.equal(fs.existsSync(path.join(audioDir, 'new-copy.mp3')), false);
+        assert.equal(fs.existsSync(path.join(audioDir, 'duplicate.wav')), false);
+      });
+    });
+  });
+
+  test('audio library scans playable formats and adds linked references atomically', async () => {
+    await withAudioDir(async audioDir => {
+      fs.writeFileSync(path.join(audioDir, 'theme.flac'), 'flac audio');
+      fs.writeFileSync(path.join(audioDir, 'theme-copy.flac'), 'flac audio');
+      fs.writeFileSync(path.join(audioDir, 'notes.txt'), 'not audio');
+      fs.mkdirSync(path.join(audioDir, 'Music'));
+      fs.mkdirSync(path.join(audioDir, 'Ambience'));
+      fs.mkdirSync(path.join(audioDir, '.bardboard-staging'));
+      const staleUpload = path.join(audioDir, '.bardboard-staging', 'stale.upload');
+      const activeUpload = path.join(audioDir, '.bardboard-staging', 'active.upload');
+      fs.writeFileSync(staleUpload, 'stale');
+      fs.writeFileSync(activeUpload, 'active');
+      fs.utimesSync(staleUpload, new Date(0), new Date(0));
+
+      await callFileApi(audioDir, createAudioService(), async baseUrl => {
+        const library = await request(baseUrl, '/audio-library');
+        assert.equal(library.status, 200);
+        assert.deepEqual(
+          library.body.files.map(file => file.path),
+          ['theme-copy.flac', 'theme.flac']
+        );
+        assert.equal(library.body.files.every(file => file.uploadSupported === false), true);
+        assert.equal(library.body.files.every(file => file.hash.length === 64), true);
+        assert.equal(fs.existsSync(staleUpload), false);
+        assert.equal(fs.existsSync(activeUpload), true);
+
+        const firstAdd = await request(baseUrl, '/audio-library/add', post({
+          paths: ['theme.flac'],
+          categories: ['Music', 'Ambience']
+        }));
+        assert.equal(firstAdd.status, 200);
+        assert.deepEqual(firstAdd.body.added.map(item => item.path).sort(), [
+          'Ambience/theme.flac',
+          'Music/theme.flac'
+        ]);
+
+        const sourceStat = fs.statSync(path.join(audioDir, 'theme.flac'));
+        assert.equal(fs.statSync(path.join(audioDir, 'Music', 'theme.flac')).ino, sourceStat.ino);
+        assert.equal(fs.statSync(path.join(audioDir, 'Ambience', 'theme.flac')).ino, sourceStat.ino);
+
+        const repeatedAdd = await request(baseUrl, '/audio-library/add', post({
+          paths: ['theme.flac'],
+          categories: ['Music', 'Ambience']
+        }));
+        assert.equal(repeatedAdd.body.added.length, 0);
+        assert.deepEqual(
+          repeatedAdd.body.skipped.map(item => item.reason).sort(),
+          ['already-linked', 'already-linked']
+        );
+
+        const duplicateContent = await request(baseUrl, '/audio-library/add', post({
+          paths: ['theme-copy.flac'],
+          categories: ['Music']
+        }));
+        assert.equal(duplicateContent.body.added.length, 0);
+        assert.deepEqual(duplicateContent.body.skipped, [{
+          source: 'theme-copy.flac',
+          category: 'Music',
+          reason: 'duplicate-content'
+        }]);
+        assert.equal(fs.existsSync(path.join(audioDir, 'Music', 'theme-copy.flac')), false);
+
+        const listing = await request(baseUrl, '/audio-files');
+        assert.deepEqual(listing.body.categories.Music, ['Music/theme.flac']);
+        assert.deepEqual(listing.body.categories.Ambience, ['Ambience/theme.flac']);
+        assert.deepEqual(listing.body.root.sort(), ['theme-copy.flac', 'theme.flac']);
+      });
+    });
+  });
 });

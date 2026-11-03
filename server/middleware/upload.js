@@ -15,16 +15,19 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const { AUDIO_DIR, ALLOWED_EXT } = require('../constants');
+const { AUDIO_DIR, ALLOWED_EXT, STAGING_DIR_NAME } = require('../constants');
 const { sanitizeCategory } = require('../utils/path');
+const { createAudioHasher } = require('../utils/audioHash');
 
 function createUpload(options = {}) {
   const audioDir = options.audioDir || AUDIO_DIR;
   const allowedExt = options.allowedExt || ALLOWED_EXT;
   const fsImpl = options.fs || fs;
+  const stagingDir = options.stagingDir || path.join(audioDir, STAGING_DIR_NAME);
   const maxUploadMb = options.maxUploadMb
     ?? Math.max(1, Number.parseInt(process.env.UPLOAD_MAX_MB || '50', 10));
 
@@ -34,7 +37,8 @@ function createUpload(options = {}) {
       const category = sanitizeCategory(input);
       const fileName = path.basename(file.originalname);
       const targetDir = category ? path.join(audioDir, category) : audioDir;
-      const targetPath = path.join(targetDir, fileName);
+      const stagingPath = path.join(stagingDir, `${crypto.randomUUID()}.upload`);
+      const hasher = createAudioHasher();
       let output;
       let opened = false;
       let settled = false;
@@ -53,9 +57,9 @@ function createUpload(options = {}) {
 
       let fd;
       try {
-        fsImpl.mkdirSync(targetDir, { recursive: true });
-        fd = fsImpl.openSync(targetPath, 'wx');
-        output = fsImpl.createWriteStream(targetPath, { fd, autoClose: true });
+        fsImpl.mkdirSync(stagingDir, { recursive: true });
+        fd = fsImpl.openSync(stagingPath, 'wx');
+        output = fsImpl.createWriteStream(stagingPath, { fd, autoClose: true });
         opened = true;
       } catch (error) {
         if (fd !== undefined) {
@@ -65,15 +69,12 @@ function createUpload(options = {}) {
             // The descriptor may already be closed by a failed stream setup.
           }
           try {
-            fsImpl.unlinkSync(targetPath);
+            fsImpl.unlinkSync(stagingPath);
           } catch {
             // Best-effort cleanup for a zero-byte reservation.
           }
         }
-        const uploadError = error.code === 'EEXIST'
-          ? Object.assign(new Error('A file with the same name already exists'), { code: error.code })
-          : error;
-        return recordFailure(uploadError);
+        return recordFailure(error);
       }
 
       const finish = error => {
@@ -84,28 +85,28 @@ function createUpload(options = {}) {
           return cb(null, {
             destination: targetDir,
             filename: fileName,
-            path: targetPath,
+            path: stagingPath,
+            stagingPath,
             size: output.bytesWritten,
+            hash: hasher.digest(),
             index: file._batchIndex
           });
         }
 
-        const uploadError = error.code === 'EEXIST'
-          ? Object.assign(new Error('A file with the same name already exists'), { code: error.code })
-          : error;
         if (file.stream && typeof file.stream.unpipe === 'function') file.stream.unpipe(output);
-        if (!opened) return recordFailure(uploadError);
+        if (!opened) return recordFailure(error);
 
-        fsImpl.unlink(targetPath, cleanupError => {
+        fsImpl.unlink(stagingPath, cleanupError => {
           if (cleanupError && cleanupError.code !== 'ENOENT') {
             console.warn('Could not remove partial upload:', cleanupError.message);
           }
-          recordFailure(uploadError);
+          recordFailure(error);
         });
       };
 
       output.on('error', finish);
       file.stream.on('error', finish);
+      file.stream.on('data', chunk => hasher.update(chunk));
       file.stream.pipe(output);
       output.on('finish', () => finish());
       output.on('close', () => {
