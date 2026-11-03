@@ -72,7 +72,8 @@ function createAudioRoutes(audioService) {
   router.post('/stop-audio', actionLimiter, (req, res) => {
     const { channelId } = req.body;
     if (!isValidChannelId(channelId)) return res.status(400).json({ error: 'Invalid channelId' });
-    audioService.stopAudioInDiscord(channelId);
+    const ok = audioService.stopAudioInDiscord(channelId);
+    if (!ok) return res.sendStatus(404);
     res.sendStatus(200);
   });
 
@@ -110,7 +111,8 @@ function createAudioRoutes(audioService) {
     if (!Number.isFinite(volumeValue) || volumeValue < 0 || volumeValue > 1) {
       return res.status(400).json({ error: 'Invalid volume' });
     }
-    audioService.setCurrentVolume(channelId, volumeValue);
+    const ok = audioService.setCurrentVolume(channelId, volumeValue);
+    if (!ok) return res.sendStatus(404);
     res.sendStatus(200);
   });
 

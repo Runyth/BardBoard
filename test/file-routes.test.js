@@ -207,6 +207,27 @@ describe('file and category API', () => {
     });
   });
 
+  test('same-name mutations report missing sources', async () => {
+    await withAudioDir(async audioDir => {
+      await callFileApi(audioDir, createAudioService(), async baseUrl => {
+        assert.deepEqual(await request(baseUrl, '/audio-file/move', {
+          method: 'POST',
+          body: { path: 'missing.mp3', targetCategory: '' }
+        }), { status: 404, body: { error: 'File not found' } });
+
+        assert.deepEqual(await request(baseUrl, '/audio-file/rename', {
+          method: 'POST',
+          body: { path: 'missing.mp3', newName: 'missing' }
+        }), { status: 404, body: { error: 'File not found' } });
+
+        assert.deepEqual(await request(baseUrl, '/audio-category/rename', {
+          method: 'POST',
+          body: { name: 'Missing', newName: 'Missing' }
+        }), { status: 404, body: { error: 'Category not found' } });
+      });
+    });
+  });
+
   test('DELETE /audio-file deletes files and blocks traversal or in-use tracks', async () => {
     await withAudioDir(async audioDir => {
       fs.writeFileSync(path.join(audioDir, 'delete.mp3'), 'audio');

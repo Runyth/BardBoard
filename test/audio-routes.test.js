@@ -233,7 +233,9 @@ describe('audio API', () => {
     const service = createAudioService({
       togglePause: createSpy(() => null),
       switchVoiceChannel: createSpy(() => false),
-      leaveVoiceChannel: createSpy(() => false)
+      leaveVoiceChannel: createSpy(() => false),
+      stopAudioInDiscord: createSpy(() => false),
+      setCurrentVolume: createSpy(() => false)
     });
 
     await callAudioApi(service, async baseUrl => {
@@ -248,6 +250,14 @@ describe('audio API', () => {
       assert.equal((await request(baseUrl, '/leave-channel', {
         method: 'POST',
         body: { channelId: CHANNEL_ID }
+      })).status, 404);
+      assert.equal((await request(baseUrl, '/stop-audio', {
+        method: 'POST',
+        body: { channelId: CHANNEL_ID }
+      })).status, 404);
+      assert.equal((await request(baseUrl, '/set-volume', {
+        method: 'POST',
+        body: { channelId: CHANNEL_ID, volume: 0.5 }
       })).status, 404);
     });
   });

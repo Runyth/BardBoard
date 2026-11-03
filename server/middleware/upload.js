@@ -64,6 +64,11 @@ function createUpload(options = {}) {
           } catch {
             // The descriptor may already be closed by a failed stream setup.
           }
+          try {
+            fsImpl.unlinkSync(targetPath);
+          } catch {
+            // Best-effort cleanup for a zero-byte reservation.
+          }
         }
         const uploadError = error.code === 'EEXIST'
           ? Object.assign(new Error('A file with the same name already exists'), { code: error.code })
@@ -103,6 +108,9 @@ function createUpload(options = {}) {
       file.stream.on('error', finish);
       file.stream.pipe(output);
       output.on('finish', () => finish());
+      output.on('close', () => {
+        if (!settled) finish(new Error('Upload stream closed unexpectedly'));
+      });
     },
 
     _removeFile(_req, file, cb) {
@@ -138,7 +146,4 @@ function createUpload(options = {}) {
   });
 }
 
-const upload = createUpload();
-
-module.exports = upload;
-module.exports.createUpload = createUpload;
+module.exports = { createUpload };

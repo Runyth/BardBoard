@@ -19,14 +19,14 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const upload = require('../middleware/upload');
+const { createUpload } = require('../middleware/upload');
 const { AUDIO_DIR } = require('../constants');
 const { sanitizeCategory, resolveAudioPathFrom, hasAllowedExt } = require('../utils/path');
 
 function createFileRoutes(audioService, options = {}) {
   const router = express.Router();
   const audioDir = path.resolve(options.audioDir || AUDIO_DIR);
-  const uploadMiddleware = options.upload || upload;
+  const uploadMiddleware = options.upload || createUpload();
   const fsImpl = options.fs || fs;
   const resolveAudioPath = relativePath => resolveAudioPathFrom(audioDir, relativePath);
   const limiter = rateLimit({
@@ -36,8 +36,6 @@ function createFileRoutes(audioService, options = {}) {
     legacyHeaders: false
   });
 
-  router.use(limiter);
-
   /**
    * Handles the `/audio-files` API endpoint to return a list of audio files
    * from the `audio-files` directory.
@@ -45,7 +43,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route GET /audio-files
    * @returns {string[]} A list of audio file names.
    */
-  router.get('/audio-files', (req, res) => {
+  router.get('/audio-files', limiter, (req, res) => {
     const baseDir = audioDir;
 
     let entries = [];
@@ -83,7 +81,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route POST /upload-audio
    * @query {string} category - Optional category folder name.
    */
-  router.post('/upload-audio', (req, res) => {
+  router.post('/upload-audio', limiter, (req, res) => {
     uploadMiddleware.single('file')(req, res, err => {
       if (err) {
         if (['EACCES', 'EIO', 'ENOSPC', 'EROFS'].includes(err.code)) {
@@ -103,7 +101,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route POST /upload-audio-batch
    * @query {string} category - Optional category folder name.
    */
-  router.post('/upload-audio-batch', (req, res) => {
+  router.post('/upload-audio-batch', limiter, (req, res) => {
     const input = String(req.query.category || '').trim();
     const category = sanitizeCategory(input);
     if (input && category !== input) return res.status(400).json({ error: 'Invalid category' });
@@ -138,7 +136,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route DELETE /audio-file
    * @query {string} path - Relative path like "Folder/File.mp3" or "File.mp3".
    */
-  router.delete('/audio-file', (req, res) => {
+  router.delete('/audio-file', limiter, (req, res) => {
     const relPath = (req.query.path || '').toString().replace(/\\/g, '/');
     if (!relPath || relPath.includes('..') || relPath.startsWith('/')) {
       return res.status(400).json({ error: 'Invalid path' });
@@ -173,7 +171,7 @@ function createFileRoutes(audioService, options = {}) {
    * @body {string} path - Relative source path like "Folder/File.mp3" or "File.mp3".
    * @body {string} [targetCategory] - Target category folder name, empty string for root.
    */
-  router.post('/audio-file/move', (req, res) => {
+  router.post('/audio-file/move', limiter, (req, res) => {
     const rawPath = (req.body?.path || '').toString();
     const sourceRelPath = rawPath.replace(/\\/g, '/');
     if (!sourceRelPath || sourceRelPath.includes('..') || sourceRelPath.startsWith('/')) {
@@ -208,6 +206,7 @@ function createFileRoutes(audioService, options = {}) {
     if (!targetFullPath) return res.status(400).json({ error: 'Invalid target path' });
 
     if (sourceFullPath === targetFullPath) {
+      if (!fsImpl.existsSync(sourceFullPath)) return res.status(404).json({ error: 'File not found' });
       return res.json({ ok: true, from: sourceRelPath, to: targetRelPath, changed: false });
     }
 
@@ -261,7 +260,7 @@ function createFileRoutes(audioService, options = {}) {
    * @body {string} path - Relative source path like "Folder/File.mp3" or "File.mp3".
    * @body {string} newName - New base name without extension.
    */
-  router.post('/audio-file/rename', (req, res) => {
+  router.post('/audio-file/rename', limiter, (req, res) => {
     const rawPath = (req.body?.path || '').toString();
     const sourceRelPath = rawPath.replace(/\\/g, '/');
     if (!sourceRelPath || sourceRelPath.includes('..') || sourceRelPath.startsWith('/')) {
@@ -291,6 +290,7 @@ function createFileRoutes(audioService, options = {}) {
     const targetFullPath = resolveAudioPath(targetRelPath);
     if (!targetFullPath) return res.status(400).json({ error: 'Invalid target path' });
     if (sourceFullPath === targetFullPath) {
+      if (!fsImpl.existsSync(sourceFullPath)) return res.status(404).json({ error: 'File not found' });
       return res.json({ ok: true, from: sourceRelPath, to: targetRelPath, changed: false });
     }
 
@@ -320,7 +320,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route POST /audio-category
    * @body {string} name - Category folder name.
    */
-  router.post('/audio-category', (req, res) => {
+  router.post('/audio-category', limiter, (req, res) => {
     const rawName = req.body?.name;
     const input = rawName == null ? '' : rawName.toString();
     const name = sanitizeCategory(input);
@@ -347,7 +347,7 @@ function createFileRoutes(audioService, options = {}) {
    * @route DELETE /audio-category
    * @query {string} name - Category folder name.
    */
-  router.delete('/audio-category', (req, res) => {
+  router.delete('/audio-category', limiter, (req, res) => {
     const input = String(req.query.name || '').trim();
     const name = sanitizeCategory(input);
     if (!name || name !== input) return res.status(400).json({ error: 'Invalid category' });
@@ -381,14 +381,18 @@ function createFileRoutes(audioService, options = {}) {
    * @body {string} name - Current category name.
    * @body {string} newName - New category name.
    */
-  router.post('/audio-category/rename', (req, res) => {
+  router.post('/audio-category/rename', limiter, (req, res) => {
     const rawName = (req.body?.name || '').toString();
     const rawNewName = (req.body?.newName || '').toString();
     const sourceName = sanitizeCategory(rawName.trim());
     const targetName = sanitizeCategory(rawNewName.trim());
     if (!sourceName || sourceName !== rawName.trim()) return res.status(400).json({ error: 'Invalid category' });
     if (!targetName || targetName !== rawNewName.trim()) return res.status(400).json({ error: 'Invalid target category' });
-    if (sourceName === targetName) return res.json({ ok: true, from: sourceName, to: targetName, changed: false });
+    if (sourceName === targetName) {
+      const sourcePath = resolveAudioPath(sourceName);
+      if (!sourcePath || !fsImpl.existsSync(sourcePath)) return res.status(404).json({ error: 'Category not found' });
+      return res.json({ ok: true, from: sourceName, to: targetName, changed: false });
+    }
 
     if (audioService && typeof audioService.isCategoryInUse === 'function' && audioService.isCategoryInUse(sourceName)) {
       return res.status(409).json({ error: 'Category contains file(s) currently in use' });
