@@ -182,6 +182,13 @@ reverse proxy and restrict access with a firewall or private network. Login
 credentials and session cookies must not travel over an unencrypted public
 connection.
 
+When the reverse proxy replaces `X-Forwarded-For` with the client address, set
+`TRUST_PROXY=1` on the bot service so rate limits identify individual clients
+instead of sharing the proxy address. Increase the value when multiple trusted
+proxies are chained. Keep `TRUST_PROXY=false` unless the bot/API port is
+unreachable except through those proxies; otherwise clients can spoof their
+address and bypass rate limits.
+
 ### Updating the Docker Deployment
 
 Back up the persisted data before an update, then fetch the new code and recreate
@@ -514,6 +521,7 @@ manage accounts from the Users page.
 | `WEB_PORT` | No | `3000` | Web UI port. | Recreate containers |
 | `BOT_PORT` | No | `3001` | Bot/API port. | Recreate containers and rebuild web image |
 | `BACKEND_URL` | No | `http://localhost:3001` | Next.js API proxy target; Compose sets it automatically. | Restart locally; Docker-managed |
+| `TRUST_PROXY` | No | `false` | Reverse-proxy hops trusted for `X-Forwarded-For`; set `1` for one proxy. | Restart |
 | `UPLOAD_MAX_MB` | No | `50` | Max upload size per file in MB. | Rebuild containers |
 | `BARDBOARD_ENV_PATH` | No | varies | Path to the legacy `.env` file. Docker sets this automatically. | Restart |
 | `BARDBOARD_CONFIG_PATH` | No | auto-detected | Path to a YAML/JSON/TOML configuration file. | Restart |
