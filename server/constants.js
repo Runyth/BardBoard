@@ -19,8 +19,18 @@ const path = require('path');
 
 const AUDIO_DIR = path.join(__dirname, '..', 'audio-files');
 const ALLOWED_EXT = new Set(['.mp3', '.wav', '.ogg', '.m4a']);
+const PLAYABLE_EXT = new Set([
+  ...ALLOWED_EXT,
+  '.aac', '.ac3', '.aif', '.aifc', '.aiff', '.alac', '.amr', '.ape', '.au',
+  '.caf', '.dff', '.dsf', '.dts', '.flac', '.m4b', '.m4p', '.m4r', '.mka',
+  '.mp2', '.mp4', '.mpa', '.mpga', '.oga', '.ogg', '.ogx', '.opus', '.spx',
+  '.tta', '.voc', '.wav', '.webm', '.wma', '.wv'
+]);
+const STAGING_DIR_NAME = '.bardboard-staging';
 
 module.exports = {
   AUDIO_DIR,
-  ALLOWED_EXT
+  ALLOWED_EXT,
+  PLAYABLE_EXT,
+  STAGING_DIR_NAME
 };

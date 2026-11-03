@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 const path = require('path');
-const { AUDIO_DIR, ALLOWED_EXT } = require('../constants');
+const { AUDIO_DIR, ALLOWED_EXT, PLAYABLE_EXT } = require('../constants');
 
 function sanitizeCategory(raw) {
   if (!raw) return '';
@@ -40,9 +40,15 @@ function hasAllowedExt(fileName) {
   return ALLOWED_EXT.has(ext);
 }
 
+function hasPlayableExt(fileName) {
+  const ext = path.extname(fileName).toLowerCase();
+  return PLAYABLE_EXT.has(ext);
+}
+
 module.exports = {
   sanitizeCategory,
   resolveAudioPath,
   resolveAudioPathFrom,
-  hasAllowedExt
+  hasAllowedExt,
+  hasPlayableExt
 };

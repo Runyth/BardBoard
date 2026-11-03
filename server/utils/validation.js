@@ -15,7 +15,7 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-const { resolveAudioPath, hasAllowedExt } = require('./path');
+const { resolveAudioPath, hasPlayableExt } = require('./path');
 
 function isValidChannelId(channelId) {
   return typeof channelId === 'string' && /^\d{17,20}$/.test(channelId);
@@ -25,7 +25,7 @@ function normalizeAudioFileName(raw) {
   if (!raw) return null;
   const relPath = raw.toString().replace(/\\/g, '/');
   if (relPath.includes('..') || relPath.startsWith('/')) return null;
-  if (!hasAllowedExt(relPath)) return null;
+  if (!hasPlayableExt(relPath)) return null;
   const fullPath = resolveAudioPath(relPath);
   if (!fullPath) return null;
   return relPath;

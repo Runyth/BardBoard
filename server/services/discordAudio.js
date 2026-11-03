@@ -29,7 +29,7 @@ const {
 const sodium = require('libsodium-wrappers');
 const musicmetadata = require('music-metadata');
 const { AUDIO_DIR } = require('../constants');
-const { resolveAudioPath, hasAllowedExt } = require('../utils/path');
+const { resolveAudioPath, hasPlayableExt } = require('../utils/path');
 
 function createDiscordAudioService(discordClient, dependencies = {}) {
   const joinVoiceChannelImpl = dependencies.joinVoiceChannel || joinVoiceChannel;
@@ -367,7 +367,7 @@ function createDiscordAudioService(discordClient, dependencies = {}) {
     await sodiumReady;
     const channel = getChannel(channelId);
     if (!channel) return false;
-    if (!hasAllowedExt(fileName)) return false;
+    if (!hasPlayableExt(fileName)) return false;
     const safePath = resolveAudioPathImpl(fileName);
     if (!safePath || !fileExistsImpl(safePath)) return false;
 
