@@ -19,6 +19,7 @@ function writeTestConfig(discordToken = 'fake-discord-token') {
     'SESSION_SECRET=test-session-secret',
     `SESSION_DIR=${sessionDir}`,
     'CORS_ORIGINS=https://allowed.example',
+    'TRUST_PROXY=1',
     'RATE_LIMIT_AUDIO=1000',
     'RATE_LIMIT_AUDIO_STATUS=1000',
     'RATE_LIMIT_FILES=1000',
@@ -30,6 +31,7 @@ writeTestConfig();
 process.env.BARDBOARD_ENV_PATH = envPath;
 process.env.BARDBOARD_CONFIG_PATH = '';
 process.env.BARDBOARD_USERS_PATH = path.join(tempDir, 'users.json');
+delete process.env.TRUST_PROXY;
 process.env.NODE_ENV = 'test';
 
 const { app, discordClient } = require('../server/app');
@@ -77,6 +79,33 @@ describe('complete Express application', { concurrency: false }, () => {
         status: 401,
         body: { error: 'Invalid username or password' }
       });
+    });
+  });
+
+  test('trust proxy keys login limits by forwarded client address', async () => {
+    assert.equal(app.get('trust proxy'), 1);
+
+    await withTestServer(app, async baseUrl => {
+      const login = forwardedFor => fetch(`${baseUrl}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': forwardedFor
+        },
+        body: JSON.stringify({ username: 'admin', password: 'wrong' })
+      });
+
+      const limitedClient = '203.0.113.10';
+      const otherClient = '203.0.113.11';
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        assert.equal((await login(limitedClient)).status, 401);
+      }
+
+      const blocked = await login(limitedClient);
+      assert.equal(blocked.status, 429);
+      assert.match(blocked.headers.get('ratelimit-policy') || '', /20/);
+
+      assert.equal((await login(otherClient)).status, 401);
     });
   });
 

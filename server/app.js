@@ -33,7 +33,8 @@ const openApiSpec = require('./docs/openapi');
 const { ensureEnvFile, getActiveConfigPath, getEnvFilePath, loadConfigFileIntoEnv, readCurrentConfig, validateInput, writeConfig } = require('./utils/envConfig');
 const { createUserStore, getUsersFilePath, hasPermission, PERMISSIONS, ROLES } = require('./utils/users');
 const createUserRoutes = require('./routes/users');
-const deploymentEnvKeys = ['WEB_PORT', 'BOT_PORT', 'BACKEND_URL', 'UPLOAD_MAX_MB', 'SESSION_DIR'];
+const { applyTrustProxy } = require('./utils/proxy');
+const deploymentEnvKeys = ['WEB_PORT', 'BOT_PORT', 'BACKEND_URL', 'TRUST_PROXY', 'UPLOAD_MAX_MB', 'SESSION_DIR'];
 const deploymentEnv = Object.fromEntries(deploymentEnvKeys
   .filter(key => Object.prototype.hasOwnProperty.call(process.env, key))
   .map(key => [key, process.env[key]]));
@@ -54,6 +55,7 @@ const userStore = createUserStore({
 });
 
 const app = express();
+applyTrustProxy(app);
 const discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const audioService = createDiscordAudioService(discordClient);
 

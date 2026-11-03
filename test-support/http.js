@@ -12,6 +12,9 @@ function createSpy(implementation = () => undefined) {
 
 async function withTestServer(router, callback) {
   const app = express();
+  if (router.settings && Object.prototype.hasOwnProperty.call(router.settings, 'trust proxy')) {
+    app.set('trust proxy', router.settings['trust proxy']);
+  }
   app.use(express.json());
   app.use(router);
 

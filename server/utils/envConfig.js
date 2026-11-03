@@ -41,6 +41,7 @@ const CONFIG_FIELDS = [
   { key: 'WEB_PORT', label: 'Web Port', section: 'Network and Ports', description: 'Port exposed by the Next.js web UI.', type: 'integer', restartScope: 'web', settingsEditable: false },
   { key: 'BOT_PORT', label: 'Bot/API Port', section: 'Network and Ports', description: 'Port exposed by the bot/API process.', type: 'integer', restartScope: 'bot', settingsEditable: false },
   { key: 'BACKEND_URL', label: 'Backend URL', section: 'Network and Ports', description: 'URL used by Next.js to proxy API requests.', restartScope: 'web', settingsEditable: false },
+  { key: 'TRUST_PROXY', label: 'Trust Proxy', section: 'Network and Ports', description: 'Express proxy trust: false or the number of trusted reverse-proxy hops.', type: 'trust-proxy', restartScope: 'bot' },
   { key: 'UPLOAD_MAX_MB', label: 'Upload Max MB', section: 'Uploads and Rate Limit', description: 'Maximum upload size per file in MB.', type: 'integer', restartScope: 'both', settingsEditable: false },
   { key: 'RATE_LIMIT_AUDIO', label: 'Audio Rate Limit', section: 'Uploads and Rate Limit', description: 'Per-minute limit for playback control requests.', type: 'integer', restartScope: 'bot' },
   { key: 'RATE_LIMIT_FILES', label: 'Files Rate Limit', section: 'Uploads and Rate Limit', description: 'Per-minute limit for file-management requests.', type: 'integer', restartScope: 'bot' },
@@ -73,6 +74,7 @@ const DEFAULT_CONFIG_VALUES = {
   WEB_PORT: '3000',
   BOT_PORT: '3001',
   BACKEND_URL: 'http://localhost:3001',
+  TRUST_PROXY: 'false',
   UPLOAD_MAX_MB: '50',
   RATE_LIMIT_AUDIO: '120',
   RATE_LIMIT_FILES: '60',
@@ -251,6 +253,13 @@ function validateFieldValue(field, value, key = field?.key || 'value') {
     const parsed = Number.parseInt(value, 10);
     if (!Number.isFinite(parsed) || `${parsed}` !== value.trim() || parsed < 0) {
       return { error: `Invalid integer for ${key}` };
+    }
+  }
+
+  if (field?.type === 'trust-proxy' && value.trim() !== '') {
+    const trimmed = value.trim().toLowerCase();
+    if (!/^(?:false|\d+)$/.test(trimmed)) {
+      return { error: `Invalid trust proxy value for ${key}` };
     }
   }
 

@@ -16,6 +16,7 @@ const {
 } = require('../server/utils/envConfig');
 const { getConfigFilePath, readConfigFile, serializeConfig } = require('../server/utils/configFile');
 const { hasAllowedExt, resolveAudioPathFrom, sanitizeCategory } = require('../server/utils/path');
+const { applyTrustProxy, parseTrustProxy } = require('../server/utils/proxy');
 const { isValidChannelId, normalizeAudioFileName } = require('../server/utils/validation');
 
 const originalEnvPath = process.env.BARDBOARD_ENV_PATH;
@@ -75,6 +76,22 @@ describe('path and request validation', () => {
     assert.equal(resolveAudioPathFrom(base, path.resolve(base, '..', 'secret.mp3')), null);
   });
 
+  test('trust proxy settings accept false and trusted hop counts', () => {
+    assert.equal(parseTrustProxy(undefined), false);
+    assert.equal(parseTrustProxy(''), false);
+    assert.equal(parseTrustProxy('false'), false);
+    assert.equal(parseTrustProxy('0'), false);
+    assert.equal(parseTrustProxy('1'), 1);
+    assert.equal(parseTrustProxy(' 2 '), 2);
+    assert.throws(() => parseTrustProxy('true'), /TRUST_PROXY/);
+    assert.throws(() => parseTrustProxy('loopback'), /TRUST_PROXY/);
+
+    const calls = [];
+    const app = { set: (...args) => calls.push(args) };
+    assert.equal(applyTrustProxy(app, '1'), 1);
+    assert.deepEqual(calls, [['trust proxy', 1]]);
+  });
+
   test('category, extension and channel validators accept only supported values', () => {
     assert.equal(sanitizeCategory(' Combat! '), 'Combat!');
     assert.equal(sanitizeCategory('../Combat'), 'Combat');
@@ -110,6 +127,9 @@ describe('environment configuration', () => {
     assert.match(validateInput({ RATE_LIMIT_AUDIO: '-1' }, items).error, /Invalid integer/);
     assert.match(validateInput({ RATE_LIMIT_AUDIO: '1.5' }, items).error, /Invalid integer/);
     assert.match(validateInput({ NOISES_VOLUME: '10.1' }, items).error, /Invalid number/);
+    assert.deepEqual(validateInput({ TRUST_PROXY: '2' }, items), { values: { TRUST_PROXY: '2' } });
+    assert.match(validateInput({ TRUST_PROXY: 'true' }, items).error, /Invalid trust proxy/);
+    assert.match(validateInput({ TRUST_PROXY: 'loopback' }, items).error, /Invalid trust proxy/);
     assert.deepEqual(validateInput({ SESSION_SECRET: '' }, items), { values: {} });
     assert.deepEqual(validateInput({ AUTH_ADMIN_USER: 'ignored' }, items), { values: {} });
     assert.match(validateInput({ NOISES_FOLDER: 'x'.repeat(2049) }, items).error, /Value too long/);
